@@ -29,6 +29,7 @@ import {
   sessionLikelyHasOversizedToolResults,
   truncateOversizedToolResultsInActiveTarget,
 } from "../tool-result-truncation.js";
+import { resolveModelCallUrgency } from "../vllm-priority.js";
 import type { EmbeddedRunContextRecoveryState } from "./context-recovery-state.js";
 import { createCompactionDiagId } from "./helpers.js";
 import type { RunEmbeddedAgentParams } from "./params.js";
@@ -231,6 +232,7 @@ export async function recoverEmbeddedRunOverflow(input: {
           config: runParams.config,
           skillsSnapshot: runParams.skillsSnapshot,
           senderId: runParams.senderId,
+          modelCallUrgency: resolveModelCallUrgency(runParams),
           provider: input.provider,
           modelId: input.modelId,
           harnessRuntime: input.harnessRuntime,

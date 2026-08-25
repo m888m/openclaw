@@ -3654,6 +3654,11 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H3: Hybrid config: hosted primary, local fallback
   - H3: Regional hosting / data routing
   - H2: Other OpenAI-compatible local proxies
+  - H2: One shared vLLM engine with priority lanes
+  - H3: Server requirements
+  - H3: OpenClaw routing boundary
+  - H3: Verification
+  - H3: Rollback
   - H2: Smaller or stricter backends
   - H2: Troubleshooting
   - H2: Related

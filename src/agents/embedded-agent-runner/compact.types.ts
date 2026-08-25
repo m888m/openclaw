@@ -13,6 +13,7 @@ import type { SkillSnapshot } from "../../skills/types.js";
 import type { ExecElevatedDefaults, ExecToolDefaults } from "../bash-tools.exec-types.js";
 import type { AgentRunSessionTarget } from "../run-session-target.js";
 import type { AgentRuntimeAuthPlan, AgentRuntimePlan } from "../runtime-plan/types.js";
+import type { ModelCallUrgency } from "./vllm-priority.js";
 
 export type CompactEmbeddedAgentSessionParams = {
   sessionId: string;
@@ -51,6 +52,8 @@ export type CompactEmbeddedAgentSessionParams = {
   /** Parent session key for subagent policy inheritance. */
   spawnedBy?: string | null;
   inputProvenance?: InputProvenance;
+  /** Urgency inherited from the run that requested this auxiliary model call. */
+  modelCallUrgency?: ModelCallUrgency;
   /** Trusted in-process subagent-completion handoff; never derived from public input. */
   trustedInternalHandoff?: boolean;
   sessionFile: string;

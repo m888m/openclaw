@@ -28,6 +28,7 @@ import {
   resolveEmbeddedAgentStreamFn,
 } from "../stream-resolution.js";
 import type { ProviderThinkLevel } from "../utils.js";
+import { resolveModelCallUrgency } from "../vllm-priority.js";
 import {
   resolveAttemptStreamAuthProfileId,
   resolveAttemptToolPolicyMessageProvider,
@@ -174,6 +175,7 @@ export async function prepareEmbeddedAttemptTransport(input: {
     {
       preparedExtraParams: effectiveExtraParams,
       nativeWebSearchPolicyContext,
+      vllmPriority: { urgency: resolveModelCallUrgency(attempt) },
     },
   );
   if (input.codeModeControlsEnabled) {

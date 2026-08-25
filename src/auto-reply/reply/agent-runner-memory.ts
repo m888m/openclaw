@@ -11,6 +11,7 @@ import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-bu
 import { estimateMessagesTokens } from "../../agents/compaction.js";
 import { classifyCompactionReason } from "../../agents/embedded-agent-runner/compact-reasons.js";
 import { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
+import { resolveModelCallUrgency } from "../../agents/embedded-agent-runner/vllm-priority.js";
 import { isCliRuntimeAliasForProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveContextConfigProviderForRuntime } from "../../agents/openai-routing.js";
@@ -995,6 +996,12 @@ export async function runPreflightCompactionIfNeeded(params: {
       thinkLevel: params.followupRun.run.thinkLevel,
       bashElevated: params.followupRun.run.bashElevated,
       trigger: "budget",
+      modelCallUrgency: resolveModelCallUrgency({
+        trigger: params.isHeartbeat ? "heartbeat" : "user",
+        currentInboundEventKind: params.followupRun.currentInboundEventKind,
+        inputProvenance: params.followupRun.run.inputProvenance,
+        spawnedBy: params.followupRun.run.spawnedBy,
+      }),
       force: true,
       forcePreflight: true,
       preflightRequired: true,

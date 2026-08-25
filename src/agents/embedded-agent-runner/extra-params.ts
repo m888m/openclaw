@@ -41,6 +41,7 @@ import type { StreamFn } from "../runtime/index.js";
 import type { SettingsManager } from "../sessions/index.js";
 import { log } from "./logger.js";
 import { parseCacheRetention, resolveCacheRetention } from "./prompt-cache-retention.js";
+import { type ModelCallUrgency, prepareVllmPriorityExtraParams } from "./vllm-priority.js";
 
 function requireBaseStreamFn(streamFn: StreamFn | undefined): StreamFn {
   if (!streamFn) {
@@ -1102,6 +1103,7 @@ export function applyExtraParamsToAgent(
   options?: {
     preparedExtraParams?: Record<string, unknown>;
     nativeWebSearchPolicyContext?: NativeWebSearchToolPolicyParams;
+    vllmPriority?: { urgency: ModelCallUrgency };
   },
 ): { effectiveExtraParams: Record<string, unknown> } {
   const resolvedExtraParams = resolveExtraParams({
@@ -1110,7 +1112,7 @@ export function applyExtraParamsToAgent(
     modelId,
     agentId,
   });
-  const override =
+  let override =
     extraParamsOverride && Object.keys(extraParamsOverride).length > 0
       ? sanitizeExtraParamsRecord(
           Object.fromEntries(
@@ -1118,7 +1120,7 @@ export function applyExtraParamsToAgent(
           ),
         )
       : undefined;
-  const effectiveExtraParams =
+  let effectiveExtraParams =
     options?.preparedExtraParams ??
     resolvePreparedExtraParams({
       cfg,
@@ -1133,6 +1135,17 @@ export function applyExtraParamsToAgent(
       model,
       resolvedTransport,
     });
+  if (options?.vllmPriority) {
+    const preparedVllmPriority = prepareVllmPriorityExtraParams({
+      configuredExtraParams: resolvedExtraParams,
+      effectiveExtraParams,
+      extraParamsOverride: override,
+      model,
+      urgency: options.vllmPriority.urgency,
+    });
+    effectiveExtraParams = preparedVllmPriority.effectiveExtraParams;
+    override = preparedVllmPriority.extraParamsOverride;
+  }
   const wrapperContext: ApplyExtraParamsContext = {
     agent,
     cfg,

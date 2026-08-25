@@ -3261,7 +3261,7 @@ describe("runEmbeddedAgent overflow compaction trigger routing", () => {
       compactDirect: mockedCompactDirect,
     });
 
-    await runEmbeddedAgent(overflowBaseRunParams);
+    await runEmbeddedAgent({ ...overflowBaseRunParams, trigger: "user" });
 
     expect(mockedCompactDirect).toHaveBeenCalledTimes(1);
     const compactParams = expectMockCallFields(mockedCompactDirect, {
@@ -3274,6 +3274,7 @@ describe("runEmbeddedAgent overflow compaction trigger routing", () => {
     expectRecordFields(compactParams.runtimeContext, {
       trigger: "overflow",
       authProfileId: "test-profile",
+      modelCallUrgency: "foreground",
     });
   });
 
