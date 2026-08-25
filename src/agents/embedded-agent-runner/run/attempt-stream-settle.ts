@@ -44,6 +44,7 @@ import {
   resolveEmbeddedAgentStreamFn,
 } from "../stream-resolution.js";
 import type { ProviderThinkLevel } from "../utils.js";
+import { resolveModelCallUrgency } from "../vllm-priority.js";
 import { joinWithRunLivenessDeadline, RUN_LIVENESS_JOIN_TIMEOUT_MS } from "./abortable.js";
 import {
   shouldWaitForCompletionRequiredAsyncTasks,
@@ -595,6 +596,7 @@ export async function prepareEmbeddedAttemptTransport(input: {
     {
       preparedExtraParams: effectiveExtraParams,
       nativeWebSearchPolicyContext,
+      vllmPriority: { urgency: resolveModelCallUrgency(attempt) },
     },
   );
   if (input.codeModeControlsEnabled) {

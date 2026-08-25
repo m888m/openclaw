@@ -34,6 +34,7 @@ import { resolveContextEngineCapabilities } from "../context-engine-capabilities
 import { log } from "../logger.js";
 import { mergeUsageIntoAccumulator, type UsageAccumulator } from "../usage-accumulator.js";
 import { attachCompactionAccountingRecorder } from "./compaction-accounting-bridge.js";
+import { resolveModelCallUrgency } from "../vllm-priority.js";
 import type { EmbeddedRunContextRecoveryState } from "./context-recovery-state.js";
 import type { PreparedEmbeddedRunInput } from "./execution-context.js";
 import type { RunEmbeddedAgentParams } from "./params.js";
@@ -145,6 +146,7 @@ export async function compactEmbeddedRunForRecovery(
       toolsAllow: runParams.toolsAllow,
       skillsSnapshot: runParams.skillsSnapshot,
       senderId: runParams.senderId,
+      modelCallUrgency: resolveModelCallUrgency(runParams),
       provider: input.provider,
       modelId: input.modelId,
       harnessRuntime: input.harnessRuntime,

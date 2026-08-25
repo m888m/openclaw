@@ -225,6 +225,7 @@ describe("compactEmbeddedRunForRecovery", () => {
           ...baseRunParams,
           sandboxSessionKey: "global",
           sandboxAgentId: "main",
+          trigger: "user",
           modelSelectionLocked: true,
           modelFallbacksOverride: [],
         },
@@ -266,6 +267,7 @@ describe("compactEmbeddedRunForRecovery", () => {
         modelSelectionLocked: true,
         modelFallbacksOverride: [],
         authProfileId: "openai:work",
+        modelCallUrgency: "foreground",
         promptCache,
       },
     });

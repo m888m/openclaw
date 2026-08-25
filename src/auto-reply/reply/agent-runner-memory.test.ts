@@ -308,6 +308,7 @@ type CompactEmbeddedAgentSessionParams = {
   force?: boolean;
   forcePreflight?: boolean;
   modelSelectionLocked?: boolean;
+  modelCallUrgency?: "foreground" | "normal" | "background";
   preflightRequired?: boolean;
   preflightCompactionTrigger?: string;
   sessionEntry?: SessionEntry;
@@ -2386,7 +2387,6 @@ describe("runMemoryFlushIfNeeded", () => {
       expect(followupRun.run.sessionId).toBe("session");
     },
   );
-
   it("preflight compacts a fresh session when the current prompt estimate pushes the next request over budget", async () => {
     registerMemoryFlushPlanResolverForTest(() =>
       createModifiedMemoryFlushPlan({ softThresholdTokens: 0, reserveTokensFloor: 10 }),

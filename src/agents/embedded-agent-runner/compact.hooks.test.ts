@@ -1384,6 +1384,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
       sessionAgentId: "main",
       effectiveWorkspace: join(TEST_WORKSPACE_DIR, "workspace"),
       agentDir: join(TEST_WORKSPACE_DIR, "workspace"),
+      modelCallUrgency: "foreground",
       runtimePlan: {
         auth: { forwardedAuthProfileId: "openai:profile-1" },
         transport: { resolveExtraParams: vi.fn(() => undefined) },
@@ -1411,6 +1412,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
       join(TEST_WORKSPACE_DIR, "workspace"),
       undefined,
       expectRecordFields(mockCallArg(applyExtraParamsToAgentMock, 0, 11), {
+        vllmPriority: { urgency: "foreground" },
         nativeWebSearchPolicyContext: {
           sessionKey: undefined,
           webSearchEnabled: false,
