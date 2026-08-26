@@ -160,6 +160,31 @@ function createTelegramResolvedTokenConfig(token: string) {
   };
 }
 
+function createAccountRoutingConfig(
+  bindings: Array<{
+    agentId: string;
+    match: {
+      channel: string;
+      accountId?: string;
+      peer?: { kind: "direct"; id: string };
+    };
+  }> = [],
+) {
+  return {
+    agents: {
+      entries: {
+        default: { default: true },
+        clawy: {},
+        cordy: {},
+        account: {},
+        alternate: {},
+        wildcard: {},
+      },
+    },
+    bindings,
+  };
+}
+
 function mockResolvedCommandConfig(params: {
   rawConfig: Record<string, unknown>;
   resolvedConfig: Record<string, unknown>;
@@ -189,6 +214,92 @@ async function runMessageCommand(opts: Record<string, unknown> = {}) {
 }
 
 describe("messageCommand", () => {
+  it.each([
+    { accountId: "clawdy", expectedAgentId: "clawy" },
+    { accountId: "cordy", expectedAgentId: "cordy" },
+  ])(
+    "passes the $accountId route owner to agent-scoped message and TTS handling",
+    async (testCase) => {
+      testConfig = createAccountRoutingConfig([
+        {
+          agentId: "clawy",
+          match: { channel: "telegram", accountId: "clawdy" },
+        },
+        {
+          agentId: "cordy",
+          match: { channel: "telegram", accountId: "cordy" },
+        },
+      ]);
+
+      await runMessageCommand({ accountId: testCase.accountId });
+
+      expect(readOnlyMessageActionCall().agentId).toBe(testCase.expectedAgentId);
+    },
+  );
+
+  it("uses canonical unknown-direct precedence for explicit account sends", async () => {
+    testConfig = createAccountRoutingConfig([
+      {
+        agentId: "wildcard",
+        match: {
+          channel: "telegram",
+          accountId: "primary",
+          peer: { kind: "direct", id: "*" },
+        },
+      },
+      {
+        agentId: "alternate",
+        match: {
+          channel: "telegram",
+          accountId: "primary",
+          peer: { kind: "direct", id: "known-peer" },
+        },
+      },
+      {
+        agentId: "account",
+        match: { channel: "telegram", accountId: "primary" },
+      },
+    ]);
+
+    await runMessageCommand({ accountId: "primary" });
+
+    expect(readOnlyMessageActionCall().agentId).toBe("wildcard");
+  });
+
+  it("prefers an exact account binding over a channel wildcard", async () => {
+    testConfig = createAccountRoutingConfig([
+      {
+        agentId: "wildcard",
+        match: { channel: "telegram", accountId: "*" },
+      },
+      {
+        agentId: "account",
+        match: { channel: "telegram", accountId: "primary" },
+      },
+    ]);
+
+    await runMessageCommand({ accountId: "primary" });
+
+    expect(readOnlyMessageActionCall().agentId).toBe("account");
+  });
+
+  it.each([
+    { name: "missing account", options: {} },
+    { name: "unbound account", options: { accountId: "unbound" } },
+    { name: "non-send action", options: { action: "poll", accountId: "primary" } },
+  ])("keeps the default owner for $name", async (testCase) => {
+    testConfig = createAccountRoutingConfig([
+      {
+        agentId: "account",
+        match: { channel: "telegram", accountId: "primary" },
+      },
+    ]);
+
+    await runMessageCommand(testCase.options);
+
+    expect(readOnlyMessageActionCall().agentId).toBe("default");
+  });
+
   it("threads resolved SecretRef config into message actions", async () => {
     const rawConfig = createTelegramSecretRawConfig();
     const resolvedConfig = createTelegramResolvedTokenConfig("12345:resolved-token");

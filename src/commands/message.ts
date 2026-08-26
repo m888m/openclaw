@@ -20,6 +20,7 @@ import { withProgress } from "../cli/progress.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OutboundSendDeps } from "../infra/outbound/deliver.js";
 import { runMessageAction } from "../infra/outbound/message-action-runner.js";
+import { resolveAgentRoute } from "../routing/resolve-route.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../runtime.js";
 
 function extractMessageId(payload: unknown): string | undefined {
@@ -93,6 +94,18 @@ export async function messageCommand(
     );
   }
   const action = actionMatch as ChannelMessageActionName;
+  const defaultAgentId = resolveDefaultAgentId(cfg);
+  // Direct CLI sends have no inbound peer identity. Preserve canonical
+  // unknown-direct precedence so account ownership also scopes TTS and media.
+  const agentId =
+    action === "send" && scope.channel && scope.accountId
+      ? resolveAgentRoute({
+          cfg,
+          channel: scope.channel,
+          accountId: scope.accountId,
+          peer: { kind: "direct", id: "" },
+        }).agentId
+      : defaultAgentId;
 
   const outboundDeps: OutboundSendDeps = createOutboundSendDeps(deps);
 
@@ -104,7 +117,7 @@ export async function messageCommand(
       action,
       params: opts,
       deps: outboundDeps,
-      agentId: resolveDefaultAgentId(cfg),
+      agentId,
       senderIsOwner: opts.senderIsOwner !== false,
       conversationReadOrigin: "direct-operator",
       gateway: {
