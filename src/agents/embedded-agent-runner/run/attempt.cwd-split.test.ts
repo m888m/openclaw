@@ -92,6 +92,35 @@ describe("runEmbeddedAttempt cwd/workspace split", () => {
     });
   });
 
+  it("forwards host-selected model and input provenance into attempt tools", async () => {
+    const inputProvenance = {
+      kind: "inter_session" as const,
+      sourceSessionKey: "agent:clawy:operator",
+      sourceTool: "sessions_send",
+    };
+
+    await createContextEngineAttemptRunner({
+      contextEngine: createContextEngineBootstrapAndAssemble(),
+      sessionKey: "agent:postman:tony-email-lookup",
+      tempPaths,
+      attemptOverrides: {
+        disableTools: false,
+        provider: "local",
+        modelId: "dgx-active",
+        inputProvenance,
+      },
+    });
+
+    const toolsCall = hoisted.createOpenClawCodingToolsMock.mock.calls[0]?.[0] as
+      | { modelProvider?: string; modelId?: string; inputProvenance?: unknown }
+      | undefined;
+    expect(toolsCall).toMatchObject({
+      modelProvider: "local",
+      modelId: "dgx-active",
+      inputProvenance,
+    });
+  });
+
   it("skips runtime tool construction when the selected model does not support tools", async () => {
     hoisted.supportsModelToolsMock.mockReturnValueOnce(false);
 

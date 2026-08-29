@@ -985,6 +985,30 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
     });
   });
 
+  it("forwards host-selected model and input provenance when rebuilding compaction tools", async () => {
+    const inputProvenance = {
+      kind: "inter_session" as const,
+      sourceSessionKey: "agent:clawy:operator",
+      sourceTool: "sessions_send",
+    };
+
+    await compactEmbeddedAgentSessionDirect({
+      sessionId: "session-1",
+      sessionKey: "agent:postman:tony-email-lookup",
+      sessionFile: "/tmp/session.jsonl",
+      workspaceDir: "/tmp/workspace",
+      provider: "local",
+      model: "dgx-active",
+      inputProvenance,
+    });
+
+    expectRecordFields(mockCallArg(createOpenClawCodingToolsMock), {
+      modelProvider: "local",
+      modelId: "dgx-active",
+      inputProvenance,
+    });
+  });
+
   it.each([
     { input: ["text"], modelHasVision: false },
     { input: ["text", "image"], modelHasVision: true },

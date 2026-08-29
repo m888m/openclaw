@@ -152,6 +152,10 @@ export type HookContext = {
   sessionKey?: string;
   /** Ephemeral session UUID — regenerated on /new and /reset. */
   sessionId?: string;
+  /** Host-selected model provider for the current run. */
+  modelProviderId?: string;
+  /** Host-selected model id for the current run. */
+  modelId?: string;
   /** Host-normalized provenance for the current agent input. */
   inputProvenance?: InputProvenance;
   runId?: string;
@@ -1589,6 +1593,8 @@ export async function runBeforeToolCallHook(args: {
       ...(args.ctx?.sessionKey && { sessionKey: args.ctx.sessionKey }),
       ...(args.ctx?.sessionId && { sessionId: args.ctx.sessionId }),
       ...(args.ctx?.runId && { runId: args.ctx.runId }),
+      ...(args.ctx?.modelProviderId && { modelProviderId: args.ctx.modelProviderId }),
+      ...(args.ctx?.modelId && { modelId: args.ctx.modelId }),
       ...(args.ctx?.inputProvenance ? { inputProvenance: args.ctx.inputProvenance } : {}),
       ...(args.ctx?.trace && { trace: freezeDiagnosticTraceContext(args.ctx.trace) }),
       ...(args.toolCallId && { toolCallId: args.toolCallId }),

@@ -299,6 +299,8 @@ describe("createOpenClawCodingTools", () => {
     await requireToolExecute(readTool)("tool-hook-provenance", {
       path: "note.txt",
       inputProvenance: { kind: "external_user" },
+      modelProviderId: "spoof-provider",
+      modelId: "spoof-model",
     });
 
     expect(beforeToolCall).toHaveBeenCalledTimes(1);
@@ -306,7 +308,8 @@ describe("createOpenClawCodingTools", () => {
       expect.objectContaining({
         agentId: "postman",
         sessionKey: "agent:postman:tony-email-lookup",
-        inputProvenance,
+        modelProviderId: "local",
+        modelId: "dgx-active",
       }),
     );
     const observedProvenance = beforeToolCall.mock.calls[0]?.[1]?.inputProvenance;
@@ -314,7 +317,43 @@ describe("createOpenClawCodingTools", () => {
     expect(Object.isFrozen(observedProvenance)).toBe(true);
     expect(beforeToolCall.mock.calls[0]?.[0]?.params).toMatchObject({
       inputProvenance: { kind: "external_user" },
+      modelProviderId: "spoof-provider",
+      modelId: "spoof-model",
     });
+  });
+
+  it("omits model provenance and hook fields when resolved model facts are absent", async () => {
+    const beforeToolCall = vi.fn();
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([{ hookName: "before_tool_call", handler: beforeToolCall }]),
+    );
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hook-provenance-absent-"));
+    await fs.writeFile(path.join(tmpDir, "note.txt"), "hello");
+    const inputProvenance = normalizeInputProvenance({
+      kind: "inter_session",
+      sourceSessionKey: "agent:clawy:operator",
+      sourceTool: "sessions_send",
+    });
+    if (!inputProvenance) {
+      throw new Error("expected normalized input provenance");
+    }
+
+    const tools = createOpenClawCodingTools({
+      agentId: "postman",
+      sessionKey: "agent:postman:tony-email-lookup",
+      inputProvenance,
+      workspaceDir: tmpDir,
+    });
+    const readTool = requireTool(tools, "read");
+    await requireToolExecute(readTool)("tool-hook-provenance-absent", {
+      path: "note.txt",
+      modelProviderId: "spoof-provider",
+      modelId: "spoof-model",
+    });
+
+    const hookContext = beforeToolCall.mock.calls[0]?.[1];
+    expect(hookContext).not.toHaveProperty("modelProviderId");
+    expect(hookContext).not.toHaveProperty("modelId");
   });
 
   it("re-wraps existing before_tool_call hooks once with the current context", async () => {

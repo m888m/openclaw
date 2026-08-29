@@ -484,6 +484,8 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
   // legacy alias like `main` instead of an agent session key.
   const sandboxToolPolicy = sandbox?.tools;
   const inputProvenance = normalizeInputProvenance(options?.inputProvenance);
+  const modelProviderId = options?.modelProvider?.trim() || undefined;
+  const modelId = options?.modelId?.trim() || undefined;
   const capabilityProfile =
     options?.conversationCapabilityProfile ??
     resolveConversationCapabilityProfile({
@@ -1145,6 +1147,8 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
     sessionKey: options?.sessionKey,
     sessionId: options?.sessionId,
     runId: options?.runId,
+    ...(modelProviderId ? { modelProviderId } : {}),
+    ...(modelId ? { modelId } : {}),
     ...(inputProvenance ? { inputProvenance } : {}),
     approvalReviewerDeviceId: options?.approvalReviewerDeviceId,
     channelId: options?.hookChannelId ?? options?.currentChannelId,

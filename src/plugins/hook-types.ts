@@ -642,6 +642,10 @@ export type PluginHookToolContext = {
   sessionKey?: string;
   sessionId?: string;
   runId?: string;
+  /** Host-selected model provider for the current run. */
+  modelProviderId?: string;
+  /** Host-selected model id for the current run. */
+  modelId?: string;
   /** Host-normalized provenance for the current agent input. */
   inputProvenance?: InputProvenance;
   trace?: DiagnosticTraceContext;
