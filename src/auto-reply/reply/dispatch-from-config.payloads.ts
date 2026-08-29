@@ -138,7 +138,10 @@ async function maybeApplyTtsToReplyPayload(
     Awaited<ReturnType<typeof ttsRuntimeLoader.load>>["maybeApplyTtsToPayload"]
   >[0],
 ) {
-  if (isReplyPayloadStatusNotice(params.payload)) {
+  if (
+    isReplyPayloadStatusNotice(params.payload) ||
+    getReplyPayloadMetadata(params.payload)?.suppressTtsOnMediaFailure === true
+  ) {
     return params.payload;
   }
   if (

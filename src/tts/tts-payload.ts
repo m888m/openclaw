@@ -118,6 +118,12 @@ export async function maybeApplyTtsToPayloadCore(
   if (params.payload.isCompactionNotice) {
     return params.payload;
   }
+  // A blocked reply attachment is converted into visible fallback text before
+  // TTS runs. Keep that recovery notice text-only; speaking it turns a media
+  // delivery failure into a misleading voice reply.
+  if (getReplyPayloadMetadata(params.payload)?.suppressTtsOnMediaFailure === true) {
+    return params.payload;
+  }
   const cfg = resolveTtsRuntimeConfig(params.cfg);
   const { autoMode, config, prefsPath } = resolveTtsSettingsSnapshot({
     cfg,

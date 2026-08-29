@@ -15,7 +15,11 @@ import { logVerbose } from "../../globals.js";
 import { resolveOutboundMediaMaxBytes } from "../../media/configured-max-bytes.js";
 import { resolveOutboundAttachmentFromUrl } from "../../media/outbound-attachment.js";
 import { resolveAgentScopedOutboundMediaAccess } from "../../media/read-capability.js";
-import { appendReplyMediaFailureWarning, copyReplyPayloadMetadata } from "../reply-payload.js";
+import {
+  appendReplyMediaFailureWarning,
+  copyReplyPayloadMetadata,
+  setReplyPayloadMetadata,
+} from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
 
 const FILE_URL_RE = /^file:/i;
@@ -230,20 +234,26 @@ export function createReplyMediaPathNormalizer(params: {
         : appendReplyMediaFailureWarning(payload.text);
 
     if (normalizedMedia.length === 0) {
-      return copyReplyPayloadMetadata(payload, {
-        ...payload,
-        text,
-        mediaUrl: undefined,
-        mediaUrls: undefined,
-      });
+      return setReplyPayloadMetadata(
+        copyReplyPayloadMetadata(payload, {
+          ...payload,
+          text,
+          mediaUrl: undefined,
+          mediaUrls: undefined,
+        }),
+        { suppressTtsOnMediaFailure: true },
+      );
     }
 
-    return copyReplyPayloadMetadata(payload, {
+    const normalizedPayload = copyReplyPayloadMetadata(payload, {
       ...payload,
       text,
       mediaUrl: normalizedMedia[0],
       mediaUrls: normalizedMedia,
     });
+    return firstMediaDropError === undefined
+      ? normalizedPayload
+      : setReplyPayloadMetadata(normalizedPayload, { suppressTtsOnMediaFailure: true });
   };
 }
 

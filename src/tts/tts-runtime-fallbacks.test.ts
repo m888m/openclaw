@@ -130,6 +130,27 @@ describe("TTS runtime provider fallback and delivery behavior", () => {
     });
   });
 
+  it("does not synthesize a media failure fallback warning", async () => {
+    const payload = setReplyPayloadMetadata(
+      {
+        text: "Visible answer\n⚠️ Media failed. Try sending a smaller supported file or a different format.",
+      },
+      { suppressTtsOnMediaFailure: true },
+    );
+
+    const result = await maybeApplyTtsToPayload({
+      payload,
+      cfg: createTtsConfig("openclaw-speech-media-failure-warning"),
+      channel: "telegram",
+      kind: "final",
+      ttsAuto: "inbound",
+      inboundAudio: true,
+    });
+
+    expect(result).toBe(payload);
+    expect(synthesizeMock).not.toHaveBeenCalled();
+  });
+
   it("ignores voiceModel refs that are not speech models", async () => {
     installSpeechProviders([
       createMockSpeechProvider("openai", {
