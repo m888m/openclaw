@@ -82,6 +82,17 @@ export function prepareAgentRequestPreflight(
   const request = params.params as AgentRunRequest;
   const cfg = params.context.getRuntimeConfig();
   const canUseInternalRuntimeHandoff = resolveCanUseInternalRuntimeHandoff(params.client);
+  if (request.inputProvenance !== undefined && !canUseInternalRuntimeHandoff) {
+    params.respond(
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        "inputProvenance is reserved for authenticated backend handoffs.",
+      ),
+    );
+    return undefined;
+  }
   const requestSessionKey = request.sessionKey?.trim();
   const collectorSession = findSwarmCollectorSession(requestSessionKey);
   // Collector children always use subagent session keys, so ordinary traffic

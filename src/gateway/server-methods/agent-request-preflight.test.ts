@@ -19,6 +19,7 @@ function runPreflight(
     cached?: boolean;
     completed?: boolean;
     ended?: boolean;
+    inputProvenance?: Record<string, unknown>;
   },
 ) {
   const sessionKey = "agent:worker:subagent:collector";
@@ -48,6 +49,7 @@ function runPreflight(
       sessionKey,
       idempotencyKey: options?.idempotencyKey ?? "collector-run",
       lane: "subagent",
+      ...(options?.inputProvenance ? { inputProvenance: options.inputProvenance } : {}),
       ...(options?.includeCollectorFields === false ? {} : { swarmCollector, swarmOutputSchema }),
     },
     respond,
@@ -348,5 +350,48 @@ describe("agent request Swarm preflight", () => {
 
     expect(result).toBeDefined();
     expect(respond).not.toHaveBeenCalled();
+  });
+
+  it("rejects caller-supplied provenance outside an authenticated backend handoff", () => {
+    const { respond, result } = runPreflight(undefined, true, {
+      includeCollectorFields: false,
+      inputProvenance: {
+        kind: "inter_session",
+        sourceSessionKey: "agent:clawy:attacker-selected",
+        sourceTool: "sessions_send",
+      },
+    });
+
+    expect(result).toBeUndefined();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "INVALID_REQUEST",
+        message: "inputProvenance is reserved for authenticated backend handoffs.",
+      }),
+    );
+  });
+
+  it("accepts normalized provenance from an authenticated backend handoff", () => {
+    const { respond, result } = runPreflight(undefined, true, {
+      backend: true,
+      includeCollectorFields: false,
+      inputProvenance: {
+        kind: "inter_session",
+        sourceSessionKey: "agent:clawy:operator",
+        sourceChannel: "internal",
+        sourceTool: "sessions_send",
+      },
+    });
+
+    expect(respond).not.toHaveBeenCalled();
+    expect(result?.inputProvenance).toEqual({
+      kind: "inter_session",
+      sourceSessionKey: "agent:clawy:operator",
+      sourceChannel: "internal",
+      sourceTool: "sessions_send",
+    });
+    expect(Object.isFrozen(result?.inputProvenance)).toBe(true);
   });
 });
