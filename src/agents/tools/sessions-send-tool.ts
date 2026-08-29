@@ -13,6 +13,7 @@ import { parseSessionThreadInfo } from "../../config/sessions/thread-info.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { callGateway } from "../../gateway/call.js";
+import { dispatchAgentHandoffInProcess } from "../../gateway/internal-agent-handoff.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
   isSubagentSessionKey,
@@ -320,9 +321,14 @@ function shouldFallbackCronRunScopedActiveDelivery(
 
 async function startAgentRun(params: {
   callGateway: GatewayCaller;
+  dispatchAgentHandoff?: typeof dispatchAgentHandoffInProcess;
   runId: string;
   sendParams: Record<string, unknown>;
   sessionKey: string;
+  targetSessionId?: string;
+  sourceSessionKey?: string;
+  sourceSessionId?: string;
+  sourceChannel?: string;
   deliveryTimeoutMs?: number;
   allowActiveRunQueueDelivery?: boolean;
 }): Promise<
@@ -337,7 +343,9 @@ async function startAgentRun(params: {
 > {
   try {
     const activeRunSessionId =
-      params.allowActiveRunQueueDelivery && isRunScopedAgentSessionKey(params.sessionKey)
+      !params.dispatchAgentHandoff &&
+      params.allowActiveRunQueueDelivery &&
+      isRunScopedAgentSessionKey(params.sessionKey)
         ? resolveActiveEmbeddedRunSessionId(params.sessionKey)
         : undefined;
     const messageText =
@@ -395,11 +403,33 @@ async function startAgentRun(params: {
         formatEmbeddedAgentQueueFailureSummary(queueOutcome) ?? "active run queue rejected";
       throw new Error(queueSummary);
     }
-    const response = await params.callGateway<{ runId: string }>({
-      method: "agent",
-      params: params.sendParams,
-      timeoutMs: 10_000,
-    });
+    let response: { runId?: string };
+    if (params.dispatchAgentHandoff) {
+      const sourceSessionKey = params.sourceSessionKey?.trim();
+      const targetSessionId = params.targetSessionId?.trim();
+      if (!sourceSessionKey || !targetSessionId) {
+        throw new Error("Host-derived source and target session identities are required");
+      }
+      response = await params.dispatchAgentHandoff<{ runId: string }>({
+        sourceSessionKey,
+        sourceSessionId: params.sourceSessionId,
+        sourceChannel: params.sourceChannel,
+        targetSessionKey:
+          typeof params.sendParams.sessionKey === "string" && params.sendParams.sessionKey.trim()
+            ? params.sendParams.sessionKey.trim()
+            : params.sessionKey,
+        targetSessionId,
+        requestId: params.runId,
+        request: params.sendParams,
+        timeoutMs: 10_000,
+      });
+    } else {
+      response = await params.callGateway<{ runId: string }>({
+        method: "agent",
+        params: params.sendParams,
+        timeoutMs: 10_000,
+      });
+    }
     return {
       ok: true,
       runId: typeof response?.runId === "string" && response.runId ? response.runId : params.runId,
@@ -421,6 +451,7 @@ async function startAgentRun(params: {
 
 export function createSessionsSendTool(opts?: {
   agentSessionKey?: string;
+  agentSessionId?: string;
   agentChannel?: GatewayMessageChannel;
   sandboxed?: boolean;
   config?: OpenClawConfig;
@@ -441,6 +472,21 @@ export function createSessionsSendTool(opts?: {
       const timeoutSeconds = readNonNegativeIntegerParam(params, "timeoutSeconds") ?? 30;
       const { cfg, mainKey, alias, effectiveRequesterKey, restrictToSpawned } =
         resolveSessionToolContext(opts);
+      const requesterSessionKey = normalizeOptionalString(opts?.agentSessionKey)
+        ? effectiveRequesterKey
+        : undefined;
+      // A production sessions_send call must carry the host-derived source
+      // session into the protected dispatcher. An omitted source is not a
+      // reason to use a public Gateway fallback. Explicit callGateway doubles
+      // remain available to isolated unit tests only.
+      if (!opts?.callGateway && !requesterSessionKey) {
+        return jsonResult({
+          runId: crypto.randomUUID(),
+          status: "error",
+          error: "Host-derived source session identity is required",
+        });
+      }
+      const dispatchAgentHandoff = opts?.callGateway ? undefined : dispatchAgentHandoffInProcess;
 
       const a2aPolicy = createAgentToAgentPolicy(cfg);
       const sessionVisibility = resolveEffectiveSessionToolsVisibility({
@@ -586,7 +632,6 @@ export function createSessionsSendTool(opts?: {
       // Normalize sessionKey/sessionId input into a canonical session key.
       const resolvedKey = visibleSession.key;
       const displayKey = visibleSession.displayKey;
-      const requesterSessionKey = opts?.agentSessionKey ? effectiveRequesterKey : undefined;
       const timeoutMs =
         finiteSecondsToTimerSafeMilliseconds(timeoutSeconds, {
           floorSeconds: true,
@@ -730,6 +775,7 @@ export function createSessionsSendTool(opts?: {
             extraSystemPrompt: agentMessageContext,
             inputProvenance,
           };
+          const dispatchTargetSessionId = loadSessionEntryByKey(resolvedKey)?.sessionId;
           const maxPingPongTurns = resolvePingPongTurns();
 
           // Skip the A2A ping-pong + announce flow when the current caller is the
@@ -812,9 +858,14 @@ export function createSessionsSendTool(opts?: {
           if (timeoutSeconds === 0) {
             const start = await startAgentRun({
               callGateway: gatewayCall,
+              dispatchAgentHandoff,
               runId,
               sendParams,
               sessionKey: displayKey,
+              targetSessionId: dispatchTargetSessionId,
+              sourceSessionKey: requesterSessionKey,
+              sourceSessionId: opts?.agentSessionId,
+              sourceChannel: requesterChannel,
               deliveryTimeoutMs: announceTimeoutMs,
               allowActiveRunQueueDelivery: true,
             });
@@ -837,9 +888,14 @@ export function createSessionsSendTool(opts?: {
 
           const start = await startAgentRun({
             callGateway: gatewayCall,
+            dispatchAgentHandoff,
             runId,
             sendParams,
             sessionKey: displayKey,
+            targetSessionId: dispatchTargetSessionId,
+            sourceSessionKey: requesterSessionKey,
+            sourceSessionId: opts?.agentSessionId,
+            sourceChannel: requesterChannel,
             deliveryTimeoutMs: announceTimeoutMs,
           });
           if (!start.ok) {

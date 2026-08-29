@@ -7,9 +7,11 @@ import type { SpawnedRunMetadata } from "../../agents/spawned-context.js";
 import type { PromptMode } from "../../agents/system-prompt.types.js";
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
 import type { ChannelOutboundTargetMode } from "../../channels/plugins/types.public.js";
+import type { AdmittedInternalHandoff } from "../../gateway/internal-agent-handoff.js";
 import type { MediaFact } from "../../media/media-facts.js";
 import type { PromptImageOrderEntry } from "../../media/prompt-image-order.js";
 import type { PluginHookChannelContext } from "../../plugins/hook-types.js";
+import type { PluginAdmittedSessionDeliveryKind } from "../../plugins/plugin-tool-execution-context.js";
 import type { RuntimePluginToolGrant } from "../../plugins/runtime/tool-grant.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
 import type {
@@ -140,6 +142,10 @@ export type AgentCommandOpts = {
   bootstrapContextRunKind?: BootstrapContextRunKind;
   internalEvents?: AgentInternalEvent[];
   inputProvenance?: InputProvenance;
+  /** Immutable session delivery route copied at Gateway work admission. */
+  admittedSessionDeliveryKind?: PluginAdmittedSessionDeliveryKind;
+  /** One-shot host authority admitted for a sessions_send run. */
+  admittedInternalHandoff?: AdmittedInternalHandoff;
   /** Internal runs can execute against a session without updating visible status/model/usage. */
   sessionEffects?: "visible" | "internal";
   /** Internal handoffs can write transcript turns without changing user-facing model/usage state. */

@@ -48,6 +48,8 @@ type ErasedAgentToolExecute = {
     params: unknown,
     signal?: AbortSignal,
     onUpdate?: AgentToolUpdateCallback,
+    /** Host-issued plugin context (kept erased for compatibility with extension tools). */
+    executionContext?: unknown,
   ): Promise<AgentToolResult<unknown>>;
 };
 

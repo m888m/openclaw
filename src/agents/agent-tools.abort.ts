@@ -61,13 +61,13 @@ export function wrapToolWithAbortSignal(
   }
   const wrappedTool: AnyAgentTool = {
     ...tool,
-    execute: async (toolCallId, params, signal, onUpdate) => {
+    execute: async (toolCallId, params, signal, onUpdate, executionContext) => {
       const combinedSignal = signal ? AbortSignal.any([signal, abortSignal]) : abortSignal;
       if (combinedSignal.aborted) {
         throwAbortError();
       }
       return await raceWithAbortSignal(
-        execute(toolCallId, params, combinedSignal, onUpdate),
+        execute(toolCallId, params, combinedSignal, onUpdate, executionContext),
         combinedSignal,
       );
     },

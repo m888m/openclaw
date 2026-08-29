@@ -32,6 +32,7 @@ import {
   buildRunUserTurnIdempotencyKey,
   createUserTurnTranscriptRecorder,
 } from "../../sessions/user-turn-transcript.js";
+import type { AdmittedInternalHandoff } from "../internal-agent-handoff.js";
 import { reactivateCompletedSubagentSession } from "../session-subagent-reactivation.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
@@ -81,6 +82,7 @@ export function startAgentRunExecution(params: {
   media: MediaFact[];
   effectiveTranscriptInputText: string;
   inputProvenance?: InputProvenance;
+  admittedInternalHandoff?: AdmittedInternalHandoff;
   runId: string;
   idempotencyKey: string;
   agentDedupeKeys: readonly string[];
@@ -363,6 +365,7 @@ export function startAgentRunExecution(params: {
           acpTurnSource: params.request.acpTurnSource,
           internalEvents: params.request.internalEvents,
           inputProvenance: params.inputProvenance,
+          admittedInternalHandoff: params.admittedInternalHandoff,
           senderIsOwner: params.restoredCronContinuation
             ? true
             : clientHasAdminScope(params.client),

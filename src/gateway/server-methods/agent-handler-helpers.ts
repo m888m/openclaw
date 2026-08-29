@@ -1,4 +1,3 @@
-import { GATEWAY_CLIENT_MODES } from "../../../packages/gateway-protocol/src/client-info.js";
 import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
 import { getCliSessionBinding } from "../../agents/cli-session.js";
 import { AGENT_INTERNAL_EVENT_TYPE_TASK_COMPLETION } from "../../agents/internal-event-contract.js";
@@ -139,7 +138,20 @@ export function resolveAllowModelOverrideFromClient(
 export function resolveCanUseInternalRuntimeHandoff(
   client: GatewayRequestHandlerOptions["client"],
 ): boolean {
-  return client?.connect?.client?.mode === GATEWAY_CLIENT_MODES.BACKEND;
+  // This identity is retained for server-owned continuation controls only. It
+  // must never be used as provenance authority; sessions_send provenance is
+  // admitted exclusively by the private capability in agent preflight.
+  return client?.internal?.agentRuntimeIdentity?.kind === "agentRuntime";
+}
+
+/** Legacy server-owned control gate, intentionally separate from handoff authority. */
+export function resolveCanUseInternalRuntimeControls(
+  client: GatewayRequestHandlerOptions["client"],
+): boolean {
+  return (
+    client?.internal?.syntheticClient === true ||
+    client?.internal?.agentRuntimeIdentity?.kind === "agentRuntime"
+  );
 }
 
 export function resolveCanUseCronRunContinuation(

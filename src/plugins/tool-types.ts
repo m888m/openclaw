@@ -6,6 +6,15 @@ import type { ConversationReadInvocationOrigin } from "../channels/plugins/conve
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { HookEntry } from "../hooks/types.js";
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
+import type {
+  PluginAdmittedSessionDeliveryKind,
+  PluginToolExecutionContext,
+} from "./plugin-tool-execution-context.js";
+
+export type {
+  PluginAdmittedSessionDeliveryKind,
+  PluginToolExecutionContext,
+} from "./plugin-tool-execution-context.js";
 
 export type OpenClawPluginActiveModelContext = {
   provider?: string;
@@ -28,6 +37,16 @@ export type OpenClawPluginToolContext = {
   sessionKey?: string;
   /** Ephemeral session UUID - regenerated on /new and /reset. Use for per-conversation isolation. */
   sessionId?: string;
+  /** Stable host run identifier for run-scoped plugin state. */
+  runId?: string;
+  /** Host-normalized provenance for the current agent input. */
+  inputProvenance?: import("../sessions/input-provenance.js").InputProvenance;
+  /** Gateway-admitted delivery route snapshot; absent is not `none`. */
+  admittedSessionDeliveryKind?: PluginAdmittedSessionDeliveryKind;
+  /** Host-selected model provider for the current run. */
+  modelProviderId?: string;
+  /** Host-selected model id for the current run. */
+  modelId?: string;
   /** Out-of-band plugin-owned bindings attached by the current run initiator. */
   toolBindings?: Readonly<Record<string, unknown>>;
   /** Trusted runtime-only authorization for one bounded cross-conversation recall pass. */
@@ -72,6 +91,9 @@ export type OpenClawPluginToolContext = {
 export type OpenClawPluginToolFactory = (
   ctx: OpenClawPluginToolContext,
 ) => AnyAgentTool | AnyAgentTool[] | null | undefined;
+
+/** Compile-time helper for plugin tool handlers that opt into host context. */
+export type PluginToolExecutionContextArg = PluginToolExecutionContext | undefined;
 
 export type OpenClawPluginToolOptions = {
   name?: string;

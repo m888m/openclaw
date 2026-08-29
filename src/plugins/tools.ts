@@ -144,13 +144,18 @@ function wrapPluginToolCallbacks(entry: PluginToolRegistration, tool: AnyAgentTo
     params: unknown,
     signal?: AbortSignal,
     onUpdate?: unknown,
+    executionContext?: Parameters<AnyAgentTool["execute"]>[4],
   ) =>
     runWithPluginToolScope(
       entry,
       () =>
-        Reflect.apply(tool.execute, tool, [toolCallId, params, signal, onUpdate]) as ReturnType<
-          AnyAgentTool["execute"]
-        >,
+        Reflect.apply(tool.execute, tool, [
+          toolCallId,
+          params,
+          signal,
+          onUpdate,
+          executionContext,
+        ]) as ReturnType<AnyAgentTool["execute"]>,
     );
   const wrapped = new Proxy<AnyAgentTool>(tool, {
     get(target, prop) {
@@ -773,7 +778,7 @@ function createCachedDescriptorPluginTool(params: {
     ...(params.descriptor.requiredClientCaps
       ? { requiredClientCaps: [...params.descriptor.requiredClientCaps] }
       : {}),
-    async execute(toolCallId, executeParams, signal, onUpdate) {
+    async execute(toolCallId, executeParams, signal, onUpdate, executionContext) {
       const loadOptions = buildPluginRuntimeLoadOptions(params.loadContext, {
         activate: false,
         toolDiscovery: true,
@@ -843,7 +848,7 @@ function createCachedDescriptorPluginTool(params: {
           continue;
         }
         if (matchedTool) {
-          return matchedTool.execute(toolCallId, executeParams, signal, onUpdate);
+          return matchedTool.execute(toolCallId, executeParams, signal, onUpdate, executionContext);
         }
       }
       throw new Error(`plugin tool runtime missing (${pluginId}): ${toolName}`);

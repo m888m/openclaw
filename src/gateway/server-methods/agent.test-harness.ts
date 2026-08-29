@@ -694,6 +694,7 @@ export function backendGatewayClient(): AgentHandlerArgs["client"] {
       },
       scopes: ["operator.write"],
     },
+    internal: { syntheticClient: true },
   } as AgentHandlerArgs["client"];
 }
 

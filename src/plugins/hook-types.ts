@@ -9,6 +9,7 @@ import type { FinalizedMsgContext } from "../auto-reply/templating.js";
 import type { ChatType } from "../channels/chat-type.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { TtsAutoMode } from "../config/types.tts.js";
+import type { AdmittedInternalHandoff } from "../gateway/internal-agent-handoff.js";
 import type { DiagnosticTraceContext } from "../infra/diagnostic-trace-context.js";
 import type { InputProvenance } from "../sessions/input-provenance.js";
 import type {
@@ -36,6 +37,7 @@ import type {
   PluginHeartbeatPromptContributionEvent,
   PluginHeartbeatPromptContributionResult,
 } from "./host-hook-turn-types.js";
+import type { PluginAdmittedSessionDeliveryKind } from "./plugin-tool-execution-context.js";
 
 export type {
   PluginHookBeforeModelResolveAttachment,
@@ -262,6 +264,11 @@ export type PluginHookAgentContext = {
   workspaceDir?: string;
   modelProviderId?: string;
   modelId?: string;
+  /** Host-normalized provenance for the current agent input. */
+  inputProvenance?: InputProvenance;
+  /** Delivery route admitted by Gateway before this run; absent is not `none`. */
+  admittedSessionDeliveryKind?: PluginAdmittedSessionDeliveryKind;
+  admittedInternalHandoff?: AdmittedInternalHandoff;
   messageProvider?: string;
   /** Channel/plugin id for channel-originated runs, e.g. `discord`. */
   channel?: string;
@@ -648,6 +655,9 @@ export type PluginHookToolContext = {
   modelId?: string;
   /** Host-normalized provenance for the current agent input. */
   inputProvenance?: InputProvenance;
+  /** Delivery route admitted by Gateway before this run; absent is not `none`. */
+  admittedSessionDeliveryKind?: PluginAdmittedSessionDeliveryKind;
+  admittedInternalHandoff?: AdmittedInternalHandoff;
   trace?: DiagnosticTraceContext;
   toolName: string;
   /** Host-authoritative discriminator for tools that intentionally share names. */

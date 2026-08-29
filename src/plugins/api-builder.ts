@@ -72,6 +72,7 @@ type BuildPluginApiParams = {
       | "emitAgentEvent"
       | "setRunContext"
       | "getRunContext"
+      | "consumeRunContext"
       | "clearRunContext"
       | "registerSessionSchedulerJob"
       | "registerSessionAction"
@@ -161,6 +162,7 @@ const noopEmitAgentEvent: OpenClawPluginApi["emitAgentEvent"] = () => ({
 });
 const noopSetRunContext: OpenClawPluginApi["setRunContext"] = () => false;
 const noopGetRunContext: OpenClawPluginApi["getRunContext"] = () => undefined;
+const noopConsumeRunContext: OpenClawPluginApi["consumeRunContext"] = () => undefined;
 const noopClearRunContext: OpenClawPluginApi["clearRunContext"] = () => {};
 const noopRegisterSessionSchedulerJob: OpenClawPluginApi["registerSessionSchedulerJob"] = () =>
   undefined;
@@ -275,6 +277,7 @@ export function buildPluginApi(params: BuildPluginApiParams): OpenClawPluginApi 
     emitAgentEvent: handlers.emitAgentEvent ?? noopEmitAgentEvent,
     setRunContext: handlers.setRunContext ?? noopSetRunContext,
     getRunContext: handlers.getRunContext ?? noopGetRunContext,
+    consumeRunContext: handlers.consumeRunContext ?? noopConsumeRunContext,
     clearRunContext: handlers.clearRunContext ?? noopClearRunContext,
     registerSessionSchedulerJob:
       handlers.registerSessionSchedulerJob ?? noopRegisterSessionSchedulerJob,

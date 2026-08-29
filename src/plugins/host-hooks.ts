@@ -198,6 +198,9 @@ export type PluginRunContextGetParams = {
   namespace: string;
 };
 
+/** Parameters for an atomic read-and-delete of one run-context namespace. */
+export type PluginRunContextConsumeParams = PluginRunContextGetParams;
+
 export type PluginSessionSchedulerJobRegistration = {
   id: string;
   sessionKey: string;

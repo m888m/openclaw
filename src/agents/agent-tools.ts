@@ -13,6 +13,7 @@ import type { ChatType } from "../channels/chat-type.js";
 import type { InboundEventKind } from "../channels/inbound-event/kind.js";
 import type { ModelCompatConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { AdmittedInternalHandoff } from "../gateway/internal-agent-handoff.js";
 import type { DiagnosticTraceContext } from "../infra/diagnostic-trace-context.js";
 import { resolveEventSessionRoutingPolicy } from "../infra/event-session-routing.js";
 import { applyExecPolicyLayer } from "../infra/exec-policy.js";
@@ -21,6 +22,7 @@ import type {
   PluginHookChannelContext,
   PluginHookToolRequesterContext,
 } from "../plugins/hook-types.js";
+import type { PluginAdmittedSessionDeliveryKind } from "../plugins/plugin-tool-execution-context.js";
 import { appendRuntimePluginToolGrant } from "../plugins/tool-grant-allowlist.js";
 import { getPluginToolMeta } from "../plugins/tools.js";
 import { GATEWAY_OWNER_ONLY_CORE_TOOLS } from "../security/dangerous-tools.js";
@@ -463,6 +465,9 @@ type OpenClawCodingToolsOptions = {
   /** Prepared conversation-scoped facts for callers that already resolved this run context. */
   conversationCapabilityProfile?: ResolvedConversationCapabilityProfile;
   inputProvenance?: InputProvenance;
+  /** Delivery route admitted by Gateway before this run; absent is not `none`. */
+  admittedSessionDeliveryKind?: PluginAdmittedSessionDeliveryKind;
+  admittedInternalHandoff?: AdmittedInternalHandoff;
   /** Trusted in-process completion handoff; never derived from model-facing input. */
   trustedInternalHandoff?: boolean;
   /** Trusted server-stamped authority for an explicitly capped scheduled run. */
@@ -852,6 +857,10 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             requesterSenderId: options?.senderId,
             senderIsOwner: options?.senderIsOwner,
             sessionId: options?.sessionId,
+            runId: options?.runId,
+            inputProvenance,
+            admittedSessionDeliveryKind: options?.admittedSessionDeliveryKind,
+            admittedInternalHandoff: options?.admittedInternalHandoff,
             conversationRecall: options?.conversationRecall,
             oneShotCliRun: options?.oneShotCliRun,
             sandboxBrowserBridgeUrl: sandbox?.browser?.bridgeUrl,
@@ -933,6 +942,9 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             allowHostBrowserControl: sandbox ? sandbox.browserAllowHostControl : true,
             agentSessionKey: options?.sessionKey,
             runId: options?.runId,
+            inputProvenance,
+            admittedSessionDeliveryKind: options?.admittedSessionDeliveryKind,
+            admittedInternalHandoff: options?.admittedInternalHandoff,
             runSessionKey: options?.runSessionKey,
             agentChannel: resolveGatewayMessageChannel(
               options?.messageChannel ?? options?.messageProvider,
@@ -1150,6 +1162,12 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
     ...(modelProviderId ? { modelProviderId } : {}),
     ...(modelId ? { modelId } : {}),
     ...(inputProvenance ? { inputProvenance } : {}),
+    ...(options?.admittedSessionDeliveryKind
+      ? { admittedSessionDeliveryKind: options.admittedSessionDeliveryKind }
+      : {}),
+    ...(options?.admittedInternalHandoff
+      ? { admittedInternalHandoff: options.admittedInternalHandoff }
+      : {}),
     approvalReviewerDeviceId: options?.approvalReviewerDeviceId,
     channelId: options?.hookChannelId ?? options?.currentChannelId,
     ...(hasRequester ? { requester } : {}),

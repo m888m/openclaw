@@ -10,6 +10,7 @@ import {
   type PluginHostCleanupReason,
   type PluginJsonValue,
   type PluginRunContextGetParams,
+  type PluginRunContextConsumeParams,
   type PluginRunContextPatch,
   type PluginSessionSchedulerJobHandle,
   type PluginSessionSchedulerJobRegistration,
@@ -228,6 +229,44 @@ export function getPluginRunContext(params: {
     pluginId: params.pluginId,
   })?.get(namespace);
   return value === undefined ? undefined : copyJsonValue(value);
+}
+
+/**
+ * Atomically consumes one namespaced run-context value.
+ *
+ * The host Map operation is synchronous, so two concurrent plugin handlers
+ * cannot both observe the same one-shot value.  The returned value is cloned
+ * just like getPluginRunContext; plugin code never receives host-owned state.
+ */
+export function consumePluginRunContext(params: {
+  pluginId: string;
+  consume: PluginRunContextConsumeParams;
+}): PluginJsonValue | undefined {
+  const runId = normalizeOptionalString(params.consume.runId);
+  const namespace = normalizeNamespace(params.consume.namespace);
+  if (!runId || !namespace) {
+    return undefined;
+  }
+  if (isPluginRunClosed(runId)) {
+    return undefined;
+  }
+  const byPlugin = getPluginHostRuntimeState().runContextByRunId.get(runId);
+  const namespaces = byPlugin?.get(params.pluginId);
+  const value = namespaces?.get(namespace);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!namespaces) {
+    return undefined;
+  }
+  namespaces.delete(namespace);
+  if (namespaces.size === 0) {
+    byPlugin?.delete(params.pluginId);
+  }
+  if (byPlugin?.size === 0) {
+    getPluginHostRuntimeState().runContextByRunId.delete(runId);
+  }
+  return copyJsonValue(value);
 }
 
 export function clearPluginRunContext(params: {

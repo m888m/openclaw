@@ -45,6 +45,7 @@ export type {
   PluginNextTurnInjectionEnqueueResult,
   PluginNextTurnInjectionRecord,
   PluginRunContextGetParams,
+  PluginRunContextConsumeParams,
   PluginRunContextPatch,
   PluginRuntimeLifecycleRegistration,
   PluginSessionActionContext,
@@ -88,6 +89,8 @@ export type {
   OpenClawPluginToolContext,
   OpenClawPluginToolFactory,
   OpenClawPluginToolOptions,
+  PluginAdmittedSessionDeliveryKind,
+  PluginToolExecutionContext,
 } from "./tool-types.js";
 export type {
   OpenClawPluginNodeHostCommand,

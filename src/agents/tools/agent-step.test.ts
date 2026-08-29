@@ -2,8 +2,11 @@
 // MCP runtime retirement after completed nested turns.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CallGatewayOptions } from "../../gateway/call.js";
+import type { dispatchAgentHandoffInProcess } from "../../gateway/internal-agent-handoff.js";
 import { runAgentStep } from "./agent-step.js";
 import { testing } from "./agent-step.test-support.js";
+
+type AgentHandoffParams = Parameters<typeof dispatchAgentHandoffInProcess>[0];
 
 const runWaitMocks = vi.hoisted(() => ({
   waitForAgentRunAndReadUpdatedAssistantReply: vi.fn(),
@@ -22,6 +25,10 @@ vi.mock("../agent-bundle-mcp-tools.js", () => ({
   retireSessionMcpRuntimeForSessionKey: bundleMcpRuntimeMocks.retireSessionMcpRuntimeForSessionKey,
 }));
 
+vi.mock("../subagent-announce-delivery.js", () => ({
+  loadSessionEntryByKey: vi.fn(() => ({ sessionId: "target-session" })),
+}));
+
 describe("runAgentStep", () => {
   afterEach(() => {
     testing.setDepsForTest();
@@ -37,6 +44,11 @@ describe("runAgentStep", () => {
         gatewayCalls.push(opts);
         return { runId: "run-nested" } as T;
       },
+      dispatchAgentHandoff: async <T = { runId?: string }>(params: AgentHandoffParams) => {
+        const { request, timeoutMs } = params;
+        gatewayCalls.push({ method: "agent", params: request, timeoutMs });
+        return { runId: "run-nested" } as T;
+      },
     });
     runWaitMocks.waitForAgentRunAndReadUpdatedAssistantReply.mockResolvedValue({
       status: "ok",
@@ -46,6 +58,7 @@ describe("runAgentStep", () => {
     await expect(
       runAgentStep({
         sessionKey: "agent:main:subagent:child",
+        sourceSessionKey: "agent:main:source",
         message: "hello",
         extraSystemPrompt: "reply briefly",
         timeoutMs: 10_000,
@@ -67,8 +80,9 @@ describe("runAgentStep", () => {
     expect(params?.deliver).toBe(false);
     expect(params?.sourceReplyDeliveryMode).toBe("message_tool_only");
     expect(params?.lane).toBe("nested:agent:main:subagent:child");
-    expect(params?.inputProvenance?.kind).toBe("inter_session");
-    expect(params?.inputProvenance?.sourceTool).toBe("sessions_send");
+    // The dispatcher derives provenance from its one-shot capability; the
+    // caller-authored Gateway field is deliberately absent.
+    expect(params?.inputProvenance).toBeUndefined();
     expect(params?.message).toContain("isUser=false");
     expect(params?.message).toContain("hello");
     expect(bundleMcpRuntimeMocks.retireSessionMcpRuntimeForSessionKey).toHaveBeenCalledWith({
@@ -80,6 +94,8 @@ describe("runAgentStep", () => {
   it("does not retire bundle MCP runtime while nested agent steps are still pending", async () => {
     testing.setDepsForTest({
       callGateway: async <T = unknown>(): Promise<T> => ({ runId: "run-pending" }) as T,
+      dispatchAgentHandoff: async <T = { runId?: string }>(): Promise<T> =>
+        ({ runId: "run-pending" }) as T,
     });
     runWaitMocks.waitForAgentRunAndReadUpdatedAssistantReply.mockResolvedValue({
       status: "timeout",
@@ -88,6 +104,7 @@ describe("runAgentStep", () => {
     await expect(
       runAgentStep({
         sessionKey: "agent:main:subagent:child",
+        sourceSessionKey: "agent:main:source",
         message: "hello",
         extraSystemPrompt: "reply briefly",
         timeoutMs: 10_000,
@@ -117,6 +134,7 @@ describe("runAgentStep", () => {
 
     await runAgentStep({
       sessionKey: "agent:main:subagent:child",
+      sourceSessionKey: "agent:main:source",
       message: "internal announce step",
       transcriptMessage: "",
       extraSystemPrompt: "announce only",
@@ -161,6 +179,7 @@ describe("runAgentStep", () => {
     await expect(
       runAgentStep({
         sessionKey: "agent:main:subagent:child",
+        sourceSessionKey: "agent:main:source",
         message: "internal announce step",
         transcriptMessage: "",
         extraSystemPrompt: "announce only",
@@ -197,6 +216,7 @@ describe("runAgentStep", () => {
     await expect(
       runAgentStep({
         sessionKey: "agent:main:subagent:child",
+        sourceSessionKey: "agent:main:source",
         message: "internal announce step",
         transcriptMessage: "",
         extraSystemPrompt: "announce only",

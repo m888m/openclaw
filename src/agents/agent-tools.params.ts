@@ -1,3 +1,4 @@
+import { isHostPluginToolExecutionContext } from "../plugins/plugin-tool-execution-context.js";
 /**
  * Shared validation for model-supplied tool parameters.
  * Converts malformed file-tool arguments into retryable errors and fixes the
@@ -229,7 +230,7 @@ export function wrapToolParamValidation(
 ): AnyAgentTool {
   return {
     ...tool,
-    execute: async (toolCallId, params, signal, onUpdate) => {
+    execute: async (toolCallId, params, signal, onUpdate, executionContext) => {
       const record = getToolParamsRecord(params);
       const pathKeys = resolveFileToolPathParamKeys(requiredParamGroups);
       const normalizedParams =
@@ -239,7 +240,16 @@ export function wrapToolParamValidation(
       if (requiredParamGroups?.length) {
         assertRequiredParams(getToolParamsRecord(normalizedParams), requiredParamGroups, tool.name);
       }
-      return tool.execute(toolCallId, normalizedParams, signal, onUpdate);
+      return tool.execute(
+        toolCallId,
+        normalizedParams,
+        signal,
+        onUpdate,
+        isHostPluginToolExecutionContext(executionContext) &&
+          executionContext.canonicalParams === normalizedParams
+          ? executionContext
+          : undefined,
+      );
     },
   };
 }

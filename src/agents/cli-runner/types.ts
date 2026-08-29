@@ -14,12 +14,14 @@ import type { CliSessionBinding, SessionEntry } from "../../config/sessions.js";
 import type { SessionSystemPromptReport } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ContextEngine } from "../../context-engine/types.js";
+import type { AdmittedInternalHandoff } from "../../gateway/internal-agent-handoff.js";
 import type { ImageContent } from "../../llm/types.js";
 import type { MediaFact } from "../../media/media-facts.js";
 import type { PromptImageOrderEntry } from "../../media/prompt-image-order.js";
 import type { CliBackendConfig } from "../../plugins/cli-backend.types.js";
 import type { CliBackendExecutionMode } from "../../plugins/cli-backend.types.js";
 import type { PluginHookChannelContext } from "../../plugins/hook-types.js";
+import type { PluginAdmittedSessionDeliveryKind } from "../../plugins/plugin-tool-execution-context.js";
 import type { SpawnSecretInput } from "../../process/supervisor/types.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
 import type { UserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
@@ -81,6 +83,9 @@ export type RunCliAgentParams = {
   currentInboundEventKind?: InboundEventKind;
   currentInboundContext?: CurrentInboundPromptContext;
   inputProvenance?: InputProvenance;
+  /** Immutable session delivery route copied at Gateway work admission. */
+  admittedSessionDeliveryKind?: PluginAdmittedSessionDeliveryKind;
+  admittedInternalHandoff?: AdmittedInternalHandoff;
   /** Selected model provider used for tool policy; distinct from a CLI runtime id. */
   modelProvider?: string;
   provider: string;

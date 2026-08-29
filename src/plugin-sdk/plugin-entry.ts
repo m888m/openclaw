@@ -51,6 +51,7 @@ import type {
   PluginNextTurnInjectionEnqueueResult as _PluginNextTurnInjectionEnqueueResult,
   PluginNextTurnInjectionRecord as _PluginNextTurnInjectionRecord,
   PluginRunContextGetParams as _PluginRunContextGetParams,
+  PluginRunContextConsumeParams as _PluginRunContextConsumeParams,
   PluginRunContextPatch as _PluginRunContextPatch,
   PluginRuntimeLifecycleRegistration as _PluginRuntimeLifecycleRegistration,
   PluginSessionActionContext as _PluginSessionActionContext,
@@ -67,6 +68,8 @@ import type {
   PluginSessionTurnUnscheduleByTagResult as _PluginSessionTurnUnscheduleByTagResult,
   PluginToolMetadataRegistration as _PluginToolMetadataRegistration,
   PluginTrustedToolPolicyRegistration as _PluginTrustedToolPolicyRegistration,
+  PluginAdmittedSessionDeliveryKind as _PluginAdmittedSessionDeliveryKind,
+  PluginToolExecutionContext as _PluginToolExecutionContext,
   ProviderApplyConfigDefaultsContext as _ProviderApplyConfigDefaultsContext,
   ProviderAugmentModelCatalogContext as _ProviderAugmentModelCatalogContext,
   ProviderAuthContext as _ProviderAuthContext,
@@ -133,6 +136,7 @@ import type {
   WorkerSshIdentityRequest as _WorkerSshIdentityRequest,
 } from "../plugins/types.js";
 import { createCachedLazyValueGetter } from "./lazy-value.js";
+export { isHostPluginToolExecutionContext } from "../plugins/plugin-tool-execution-context.js";
 
 // Local alias declarations keep the .d.ts bundler materializing these names in
 // this chunk; direct re-exports break rolldown-plugin-dts chunk generation.
@@ -187,6 +191,7 @@ export type PluginNextTurnInjection = _PluginNextTurnInjection;
 export type PluginNextTurnInjectionEnqueueResult = _PluginNextTurnInjectionEnqueueResult;
 export type PluginNextTurnInjectionRecord = _PluginNextTurnInjectionRecord;
 export type PluginRunContextGetParams = _PluginRunContextGetParams;
+export type PluginRunContextConsumeParams = _PluginRunContextConsumeParams;
 export type PluginRunContextPatch = _PluginRunContextPatch;
 export type PluginRuntimeLifecycleRegistration = _PluginRuntimeLifecycleRegistration;
 export type PluginSessionActionContext = _PluginSessionActionContext;
@@ -203,6 +208,8 @@ export type PluginSessionTurnUnscheduleByTagParams = _PluginSessionTurnUnschedul
 export type PluginSessionTurnUnscheduleByTagResult = _PluginSessionTurnUnscheduleByTagResult;
 export type PluginToolMetadataRegistration = _PluginToolMetadataRegistration;
 export type PluginTrustedToolPolicyRegistration = _PluginTrustedToolPolicyRegistration;
+export type PluginAdmittedSessionDeliveryKind = _PluginAdmittedSessionDeliveryKind;
+export type PluginToolExecutionContext = _PluginToolExecutionContext;
 export type ProviderApplyConfigDefaultsContext = _ProviderApplyConfigDefaultsContext;
 export type ProviderAugmentModelCatalogContext = _ProviderAugmentModelCatalogContext;
 export type ProviderAuthContext = _ProviderAuthContext;

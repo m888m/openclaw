@@ -77,6 +77,7 @@ export function createTestPluginApi(api: TestPluginApiInput = {}): OpenClawPlugi
     emitAgentEvent: () => ({ emitted: false as const, reason: "test api" }),
     setRunContext: () => false,
     getRunContext: () => undefined,
+    consumeRunContext: () => undefined,
     clearRunContext() {},
     registerSessionSchedulerJob: () => undefined,
     registerSessionAction() {},

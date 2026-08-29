@@ -496,6 +496,13 @@ async function runCliAgentInternal(
       sessionId: params.sessionId,
       workspaceDir: params.workspaceDir,
       trigger: params.trigger,
+      ...(params.inputProvenance ? { inputProvenance: params.inputProvenance } : {}),
+      ...(params.admittedSessionDeliveryKind
+        ? { admittedSessionDeliveryKind: params.admittedSessionDeliveryKind }
+        : {}),
+      ...(params.admittedInternalHandoff
+        ? { admittedInternalHandoff: params.admittedInternalHandoff }
+        : {}),
       ...buildAgentHookContextChannelFields(params),
       ...buildAgentHookContextIdentityFields({
         trigger: params.trigger,
@@ -634,6 +641,13 @@ export async function runPreparedCliAgent(
     sessionId: params.sessionId,
     workspaceDir: params.workspaceDir,
     trigger: params.trigger,
+    ...(params.inputProvenance ? { inputProvenance: params.inputProvenance } : {}),
+    ...(params.admittedSessionDeliveryKind
+      ? { admittedSessionDeliveryKind: params.admittedSessionDeliveryKind }
+      : {}),
+    ...(params.admittedInternalHandoff
+      ? { admittedInternalHandoff: params.admittedInternalHandoff }
+      : {}),
     ...(params.config ? { config: params.config } : {}),
     ...(context.contextWindowInfo?.tokens
       ? { contextTokenBudget: context.contextWindowInfo.tokens }

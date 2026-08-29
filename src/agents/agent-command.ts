@@ -7,6 +7,7 @@ import { resolveSessionWorkStartError } from "../config/sessions/lifecycle.js";
 import { buildRestartRecoveryClaimCleanupPatch } from "../config/sessions/restart-recovery-state.js";
 import type { RestartRecoveryTerminalDeliveryEvidenceResult } from "../config/sessions/restart-recovery-types.js";
 import type { SessionEntry } from "../config/sessions/types.js";
+import { closeAdmittedInternalAgentHandoff } from "../gateway/internal-agent-handoff.js";
 import { withLocalGatewayRequestScope } from "../gateway/local-request-context.js";
 import {
   assertAgentRunLifecycleGenerationCurrent,
@@ -218,6 +219,20 @@ async function agentCommandInternal(
       },
     });
     return await sessionWorkAdmission.run(async () => {
+      // The session admission callback above has refreshed `sessionEntry` while
+      // the lease is held. Capture the exact delivery state here; preflight and
+      // delivery planning must not authorize a plugin from an unlocked store
+      // read that can race reset/rotation.
+      const admittedSessionDeliveryKind = sessionEntry?.delivery?.kind;
+      if (
+        opts.admittedInternalHandoff &&
+        (sessionEntry?.sessionId !== opts.admittedInternalHandoff.targetSessionId ||
+          sessionKey !== opts.admittedInternalHandoff.targetSessionKey ||
+          lifecycleGeneration !== opts.admittedInternalHandoff.lifecycleGeneration)
+      ) {
+        throw new Error("internal agent handoff target changed before execution.");
+      }
+      opts = { ...opts, admittedSessionDeliveryKind };
       if (opts.deliver === true) {
         const sendPolicy = resolveSendPolicy({
           cfg,
@@ -455,6 +470,7 @@ async function agentCommandInternal(
       return finalized.deliveryResult;
     });
   } finally {
+    closeAdmittedInternalAgentHandoff(opts.admittedInternalHandoff);
     sessionWorkAdmission?.release();
     if (internalModelRunTargets) {
       // Compaction may rotate a private session identity. Remove every owned

@@ -226,6 +226,13 @@ export async function runSessionsSendA2AFlow(params: {
       roundOneReply: primaryReply,
       latestReply,
     });
+    // A protected in-process handoff must have a real host-derived source. A
+    // standalone caller has no admitted source incarnation for an announce
+    // turn, so stop the follow-up rather than attributing it to the target or
+    // falling back to a public Gateway request.
+    if (!params.requesterSessionKey) {
+      return;
+    }
     const announceReply = await runAgentStep({
       sessionKey: params.targetSessionKey,
       message: "Agent-to-agent announce step.",

@@ -502,6 +502,10 @@ export function runAgentAttempt(params: {
   onUserMessagePersisted?: (message: Extract<AgentMessage, { role: "user" }>) => void;
   onLifecycleGenerationChanged?: (lifecycleGeneration: string) => void;
 }) {
+  // This route was copied by Gateway while its work-admission lease was held.
+  // Never reread the mutable session entry here: later transcript/store
+  // updates must not change the authority presented to plugin tools.
+  const admittedSessionDeliveryKind = params.opts.admittedSessionDeliveryKind;
   const sessionAuthProfileId = params.sessionEntry?.authProfileOverride?.trim();
   const sessionAuthProfileSource = params.sessionEntry?.authProfileOverrideSource;
   // An explicit session choice owns the conversation. Otherwise the profile
@@ -762,6 +766,8 @@ export function runAgentAttempt(params: {
             lane: params.opts.lane,
             extraSystemPrompt: params.opts.extraSystemPrompt,
             inputProvenance: params.opts.inputProvenance,
+            admittedSessionDeliveryKind: params.opts.admittedSessionDeliveryKind,
+            admittedInternalHandoff: params.opts.admittedInternalHandoff,
             sourceReplyDeliveryMode: params.opts.sourceReplyDeliveryMode,
             requireExplicitMessageTarget:
               params.opts.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
@@ -965,6 +971,8 @@ export function runAgentAttempt(params: {
     scheduledToolPolicy: params.opts.scheduledToolPolicy,
     internalEvents: params.opts.internalEvents,
     inputProvenance: params.opts.inputProvenance,
+    admittedSessionDeliveryKind,
+    admittedInternalHandoff: params.opts.admittedInternalHandoff,
     sourceReplyDeliveryMode: params.opts.sourceReplyDeliveryMode,
     disableMessageTool: params.opts.disableMessageTool,
     swarmCollector: params.opts.swarmCollector,

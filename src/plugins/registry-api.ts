@@ -7,6 +7,7 @@ import { buildPluginApi } from "./api-builder.js";
 import { sendPluginSessionAttachment } from "./host-hook-attachments.js";
 import {
   clearPluginRunContext,
+  consumePluginRunContext,
   getPluginRunContext,
   setPluginRunContext,
 } from "./host-hook-runtime.js";
@@ -287,6 +288,11 @@ export function createPluginApiFactory(
                   ? setPluginRunContext({ pluginId: record.id, patch })
                   : false,
               getRunContext: (get) => getPluginRunContext({ pluginId: record.id, get }),
+              consumeRunContext: (consume) =>
+                registryParams.activateGlobalSideEffects !== false &&
+                shouldCommitWorkflowSideEffect()
+                  ? consumePluginRunContext({ pluginId: record.id, consume })
+                  : undefined,
               clearRunContext: (paramsLocal) => {
                 if (
                   registryParams.activateGlobalSideEffects === false ||

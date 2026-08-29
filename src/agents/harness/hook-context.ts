@@ -9,6 +9,8 @@ import type {
   PluginHookChannelContext,
   PluginHookContextWindowSource,
 } from "../../plugins/hook-types.js";
+import type { PluginAdmittedSessionDeliveryKind } from "../../plugins/plugin-tool-execution-context.js";
+import type { InputProvenance } from "../../sessions/input-provenance.js";
 
 /**
  * Input facts used to build the agent portion of plugin hook events.
@@ -26,6 +28,8 @@ export type AgentHarnessHookContext = {
   workspaceDir?: string;
   modelProviderId?: string;
   modelId?: string;
+  inputProvenance?: InputProvenance;
+  admittedSessionDeliveryKind?: PluginAdmittedSessionDeliveryKind;
   messageProvider?: string;
   trigger?: string;
   channelId?: string;
@@ -51,6 +55,10 @@ export function buildAgentHookContext(params: AgentHarnessHookContext): PluginHo
     ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
     ...(params.modelProviderId ? { modelProviderId: params.modelProviderId } : {}),
     ...(params.modelId ? { modelId: params.modelId } : {}),
+    ...(params.inputProvenance ? { inputProvenance: params.inputProvenance } : {}),
+    ...(params.admittedSessionDeliveryKind
+      ? { admittedSessionDeliveryKind: params.admittedSessionDeliveryKind }
+      : {}),
     ...(params.messageProvider ? { messageProvider: params.messageProvider } : {}),
     ...(params.channel ? { channel: params.channel } : {}),
     ...(params.trigger ? { trigger: params.trigger } : {}),

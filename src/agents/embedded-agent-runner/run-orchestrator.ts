@@ -301,6 +301,13 @@ async function runEmbeddedAgentInternal(
           workspaceDir: resolvedWorkspace,
           modelProviderId: provider,
           modelId,
+          ...(params.inputProvenance ? { inputProvenance: params.inputProvenance } : {}),
+          ...(params.admittedSessionDeliveryKind
+            ? { admittedSessionDeliveryKind: params.admittedSessionDeliveryKind }
+            : {}),
+          ...(params.admittedInternalHandoff
+            ? { admittedInternalHandoff: params.admittedInternalHandoff }
+            : {}),
           trigger: params.trigger,
           ...buildAgentHookContextChannelFields(params),
           ...buildAgentHookContextIdentityFields({

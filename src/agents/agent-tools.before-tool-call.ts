@@ -9,6 +9,7 @@ import { addTimerTimeoutGraceMs } from "@openclaw/normalization-core/number-coer
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
 import { GatewayClientRequestError } from "../gateway/client.js";
+import type { AdmittedInternalHandoff } from "../gateway/internal-agent-handoff.js";
 import {
   diagnosticErrorCategory,
   diagnosticHttpStatusCode,
@@ -51,6 +52,10 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunnerRegistry } from "../plugins/hook-runner-global-state.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { deriveToolParams } from "../plugins/host-tool-param-parsers.js";
+import {
+  closeHostPluginToolExecutionContext,
+  createHostPluginToolExecutionContext,
+} from "../plugins/plugin-tool-execution-context.js";
 import { copyPluginToolMeta, getPluginToolMeta } from "../plugins/tools.js";
 import {
   getTrustedToolPolicyDiagnosticEntries,
@@ -158,6 +163,9 @@ export type HookContext = {
   modelId?: string;
   /** Host-normalized provenance for the current agent input. */
   inputProvenance?: InputProvenance;
+  /** Delivery route admitted by Gateway before this run; absent is not `none`. */
+  admittedSessionDeliveryKind?: "none" | "internal" | "external";
+  admittedInternalHandoff?: AdmittedInternalHandoff;
   runId?: string;
   /** Device-scoped operator session allowed to review approvals initiated by this run. */
   approvalReviewerDeviceId?: string;
@@ -1596,6 +1604,12 @@ export async function runBeforeToolCallHook(args: {
       ...(args.ctx?.modelProviderId && { modelProviderId: args.ctx.modelProviderId }),
       ...(args.ctx?.modelId && { modelId: args.ctx.modelId }),
       ...(args.ctx?.inputProvenance ? { inputProvenance: args.ctx.inputProvenance } : {}),
+      ...(args.ctx?.admittedSessionDeliveryKind
+        ? { admittedSessionDeliveryKind: args.ctx.admittedSessionDeliveryKind }
+        : {}),
+      ...(args.ctx?.admittedInternalHandoff
+        ? { admittedInternalHandoff: args.ctx.admittedInternalHandoff }
+        : {}),
       ...(args.ctx?.trace && { trace: freezeDiagnosticTraceContext(args.ctx.trace) }),
       ...(args.toolCallId && { toolCallId: args.toolCallId }),
       ...(args.ctx?.channelId && { channelId: args.ctx.channelId }),
@@ -1981,8 +1995,32 @@ export function wrapToolWithBeforeToolCallHook(
         });
       }
       const startedAt = Date.now();
+      let executionContext: unknown;
       try {
-        const result = await execute(toolCallId, executeParams, signal, onUpdate);
+        const pluginMeta = getPluginToolMeta(tool);
+        const pluginTool = pluginMeta !== undefined;
+        executionContext =
+          pluginTool && ctx && isPlainObject(executeParams)
+            ? createHostPluginToolExecutionContext({
+                pluginId: pluginMeta?.pluginId ?? "",
+                agentId: ctx.agentId,
+                sessionKey: ctx.sessionKey,
+                sessionId: ctx.sessionId,
+                runId: ctx.runId,
+                modelProviderId: ctx.modelProviderId,
+                modelId: ctx.modelId,
+                inputProvenance: ctx.inputProvenance,
+                admittedSessionDeliveryKind: ctx.admittedSessionDeliveryKind,
+                admittedInternalHandoff: ctx.admittedInternalHandoff,
+                toolName: normalizedToolName,
+                ...(toolCallId ? { toolCallId } : {}),
+                canonicalParams: executeParams,
+              })
+            : undefined;
+        if (pluginTool && ctx?.admittedInternalHandoff && !executionContext) {
+          throw new Error("plugin tool execution context is not valid for this admitted handoff");
+        }
+        const result = await execute(toolCallId, executeParams, signal, onUpdate, executionContext);
         const durationMs = Date.now() - startedAt;
         const terminalPresentation = resolveToolTerminalPresentation({
           tool,
@@ -2057,14 +2095,16 @@ export function wrapToolWithBeforeToolCallHook(
           toolCallOrdinal,
         });
         throw err;
+      } finally {
+        closeHostPluginToolExecutionContext(executionContext);
       }
     },
   };
   const executeWithHooks = wrappedTool.execute;
-  wrappedTool.execute = async (toolCallId, params, signal, onUpdate) => {
+  wrappedTool.execute = async (toolCallId, params, signal, onUpdate, executionContext) => {
     recordToolExecutionTracked(toolCallId, ctx?.runId);
     try {
-      return await executeWithHooks(toolCallId, params, signal, onUpdate);
+      return await executeWithHooks(toolCallId, params, signal, onUpdate, executionContext);
     } finally {
       // Timeout observers may consume this while the call is still pending. The
       // wrapper owns final cleanup; every pre-body settle records the separate

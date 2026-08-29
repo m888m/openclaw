@@ -8,6 +8,9 @@ import {
  * Normalizes workspace, delivery, browser, sandbox, and active-model inputs before plugin tool invocation.
  */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { AdmittedInternalHandoff } from "../gateway/internal-agent-handoff.js";
+import type { PluginAdmittedSessionDeliveryKind } from "../plugins/plugin-tool-execution-context.js";
+import type { InputProvenance } from "../sessions/input-provenance.js";
 import { normalizeDeliveryContext } from "../utils/delivery-context.js";
 import type { GatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveAgentWorkspaceDir, resolveSessionAgentIds } from "./agent-scope.js";
@@ -39,6 +42,10 @@ export type OpenClawPluginToolOptions = {
   conversationReadOrigin?: ConversationReadInvocationOrigin;
   requesterAgentIdOverride?: string;
   sessionId?: string;
+  runId?: string;
+  inputProvenance?: InputProvenance;
+  admittedSessionDeliveryKind?: PluginAdmittedSessionDeliveryKind;
+  admittedInternalHandoff?: AdmittedInternalHandoff;
   conversationRecall?: ConversationRecallContext;
   /**
    * Explicit one-shot local CLI runs should not keep plugin-owned process
@@ -100,6 +107,11 @@ export function resolveOpenClawPluginToolInputs(params: {
       agentId: sessionAgentId,
       sessionKey: options?.agentSessionKey,
       sessionId: options?.sessionId,
+      runId: options?.runId,
+      inputProvenance: options?.inputProvenance,
+      admittedSessionDeliveryKind: options?.admittedSessionDeliveryKind,
+      modelProviderId: modelProvider,
+      modelId,
       toolBindings: options?.toolBindings,
       conversationRecall: options?.conversationRecall,
       activeModel,

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { subagentRuns } from "../../agents/subagent-registry-memory.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
+import { issueInternalAgentHandoffCapability } from "../internal-agent-handoff.js";
 import { prepareAgentRequestPreflight } from "./agent-request-preflight.js";
 
 function runPreflight(
@@ -78,7 +79,10 @@ function runPreflight(
         : new Map(),
     },
     client: options?.backend
-      ? { connect: { client: { mode: "backend" }, scopes: ["operator.write"] } }
+      ? {
+          connect: { client: { mode: "backend" }, scopes: ["operator.write"] },
+          internal: { syntheticClient: true },
+        }
       : undefined,
   } as never);
   return { respond, result };
@@ -373,7 +377,7 @@ describe("agent request Swarm preflight", () => {
     );
   });
 
-  it("accepts normalized provenance from an authenticated backend handoff", () => {
+  it("rejects provenance from a synthetic backend marker without a purpose capability", () => {
     const { respond, result } = runPreflight(undefined, true, {
       backend: true,
       includeCollectorFields: false,
@@ -385,6 +389,75 @@ describe("agent request Swarm preflight", () => {
       },
     });
 
+    expect(result).toBeUndefined();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "INVALID_REQUEST",
+        message: "inputProvenance is reserved for authenticated backend handoffs.",
+      }),
+    );
+  });
+
+  it.each([
+    { label: "caller-declared backend mode", client: { connect: { client: { mode: "backend" } } } },
+    {
+      label: "verified agent runtime identity",
+      client: {
+        connect: { client: { mode: "backend" } },
+        internal: { agentRuntimeIdentity: { kind: "agentRuntime" } },
+      },
+    },
+  ])("does not let $label authorize inter-session provenance", ({ client }) => {
+    const respond = vi.fn();
+    const result = prepareAgentRequestPreflight({
+      params: {
+        message: "lookup",
+        idempotencyKey: "forged-provenance",
+        inputProvenance: {
+          kind: "inter_session",
+          sourceSessionKey: "agent:clawy:forged",
+          sourceTool: "sessions_send",
+        },
+      },
+      respond,
+      context: { getRuntimeConfig: () => ({}), dedupe: new Map() },
+      client,
+    } as never);
+
+    expect(result).toBeUndefined();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "INVALID_REQUEST" }),
+    );
+  });
+
+  it("derives provenance only after consuming the private capability", () => {
+    const targetSessionKey = "agent:worker:subagent:target";
+    const targetSessionId = "target-session-1";
+    const idempotencyKey = "admitted-handoff";
+    const capability = issueInternalAgentHandoffCapability({
+      sourceSessionKey: "agent:clawy:operator",
+      sourceChannel: "internal",
+      targetSessionKey,
+      targetSessionId,
+      requestId: idempotencyKey,
+    });
+    const respond = vi.fn();
+    const result = prepareAgentRequestPreflight({
+      params: {
+        message: "lookup",
+        sessionKey: targetSessionKey,
+        expectedExistingSessionId: targetSessionId,
+        idempotencyKey,
+      },
+      respond,
+      context: { getRuntimeConfig: () => ({}), dedupe: new Map() },
+      client: { internal: { agentHandoffCapability: capability } },
+    } as never);
+
     expect(respond).not.toHaveBeenCalled();
     expect(result?.inputProvenance).toEqual({
       kind: "inter_session",
@@ -392,6 +465,37 @@ describe("agent request Swarm preflight", () => {
       sourceChannel: "internal",
       sourceTool: "sessions_send",
     });
+    expect(result?.admittedInternalHandoff).toBeDefined();
     expect(Object.isFrozen(result?.inputProvenance)).toBe(true);
+  });
+
+  it("does not treat caller-declared backend mode as internal provenance authority", () => {
+    const respond = vi.fn();
+    const result = prepareAgentRequestPreflight({
+      params: {
+        message: "lookup",
+        idempotencyKey: "forged-mode",
+        inputProvenance: {
+          kind: "inter_session",
+          sourceSessionKey: "agent:clawy:forged",
+          sourceTool: "sessions_send",
+        },
+      },
+      respond,
+      context: { getRuntimeConfig: () => ({}), dedupe: new Map() },
+      client: {
+        connect: { client: { mode: "backend" }, scopes: ["operator.write"] },
+      },
+    } as never);
+
+    expect(result).toBeUndefined();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "INVALID_REQUEST",
+        message: "inputProvenance is reserved for authenticated backend handoffs.",
+      }),
+    );
   });
 });

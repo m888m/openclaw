@@ -13,6 +13,7 @@ type PluginApiFacadeSource = Pick<
   | "emitAgentEvent"
   | "enqueueNextTurnInjection"
   | "getRunContext"
+  | "consumeRunContext"
   | "registerAgentEventSubscription"
   | "registerControlUiDescriptor"
   | "registerRuntimeLifecycle"
@@ -54,6 +55,7 @@ export function attachPluginApiFacades<T extends object>(
   api.runContext = {
     setRunContext: (...args) => api.setRunContext(...args),
     getRunContext: (...args) => api.getRunContext(...args),
+    consumeRunContext: (...args) => api.consumeRunContext(...args),
     clearRunContext: (...args) => api.clearRunContext(...args),
   };
   api.lifecycle = {

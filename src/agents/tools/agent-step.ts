@@ -5,26 +5,29 @@
  */
 import crypto from "node:crypto";
 import { callGateway } from "../../gateway/call.js";
+import { dispatchAgentHandoffInProcess } from "../../gateway/internal-agent-handoff.js";
 import { annotateInterSessionPromptText } from "../../sessions/input-provenance.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { retireSessionMcpRuntimeForSessionKey } from "../agent-bundle-mcp-tools.js";
 import { resolveNestedAgentLaneForSession } from "../lanes.js";
 import { waitForAgentRunAndReadUpdatedAssistantReply } from "../run-wait.js";
+import { loadSessionEntryByKey } from "../subagent-announce-delivery.js";
 
 type GatewayCaller = typeof callGateway;
-type AgentCommandRunner = typeof import("../../commands/agent.js").agentCommandFromIngress;
+type AgentHandoffDispatcher = typeof dispatchAgentHandoffInProcess;
+type TestAgentCommandRunner = typeof import("../../commands/agent.js").agentCommandFromIngress;
 
 const defaultAgentStepDeps = {
-  agentCommandFromIngress: (async (...args) => {
-    const { agentCommandFromIngress } = await import("../../commands/agent.js");
-    return await agentCommandFromIngress(...args);
-  }) as AgentCommandRunner,
+  dispatchAgentHandoff: dispatchAgentHandoffInProcess,
   callGateway,
+  agentCommandFromIngress: undefined as TestAgentCommandRunner | undefined,
 };
 
 let agentStepDeps: {
-  agentCommandFromIngress: AgentCommandRunner;
+  dispatchAgentHandoff: AgentHandoffDispatcher;
   callGateway: GatewayCaller;
+  /** Test-only compatibility seam; production defaults to the dispatcher above. */
+  agentCommandFromIngress?: TestAgentCommandRunner;
 } = defaultAgentStepDeps;
 
 function extractAgentCommandReply(result: unknown): string | undefined {
@@ -35,7 +38,6 @@ function extractAgentCommandReply(result: unknown): string | undefined {
     !Array.isArray(candidate.meta.error)
       ? (candidate.meta.error as { kind?: unknown; terminalPresentation?: unknown })
       : undefined;
-  // Plain incomplete-turn output is a control failure; trusted terminal tool presentations remain deliverable.
   if (error?.kind === "incomplete_turn" && error.terminalPresentation !== true) {
     return undefined;
   }
@@ -64,7 +66,8 @@ export async function runAgentStep(params: {
   channel?: string;
   lane?: string;
   transcriptMessage?: string;
-  sourceSessionKey?: string;
+  /** Host-derived source identity; protected handoffs never infer this from the target. */
+  sourceSessionKey: string;
   sourceChannel?: string;
   sourceTool?: string;
 }): Promise<string | undefined> {
@@ -79,8 +82,10 @@ export async function runAgentStep(params: {
   const message = annotateInterSessionPromptText(params.message, inputProvenance);
   const lane = params.lane ?? resolveNestedAgentLaneForSession(params.sessionKey);
   const channel = params.channel ?? INTERNAL_MESSAGE_CHANNEL;
-  if (params.transcriptMessage !== undefined) {
-    // Transcript-message mode must use the in-process command path to preserve transcript text.
+  if (params.transcriptMessage !== undefined && agentStepDeps.agentCommandFromIngress) {
+    // Kept only for unit-test doubles that explicitly install the legacy
+    // callback. Production never populates this field and always uses the
+    // capability-bearing dispatcher below.
     const result = await agentStepDeps.agentCommandFromIngress({
       message,
       transcriptMessage: params.transcriptMessage,
@@ -100,9 +105,20 @@ export async function runAgentStep(params: {
     });
     return extractAgentCommandReply(result);
   }
-  const response = await agentStepDeps.callGateway({
-    method: "agent",
-    params: {
+  // All A2A branches, including transcript bookkeeping turns, use the same
+  // host dispatcher. `transcriptMessage` remains part of the caller contract
+  // for compatibility, but is intentionally not accepted as Gateway authority.
+  const targetSessionId = loadSessionEntryByKey(params.sessionKey)?.sessionId?.trim();
+  if (!targetSessionId) {
+    throw new Error("Host-derived target session identity is required");
+  }
+  const response = await agentStepDeps.dispatchAgentHandoff<{ runId: string }>({
+    sourceSessionKey: params.sourceSessionKey,
+    sourceChannel: params.sourceChannel,
+    targetSessionKey: params.sessionKey,
+    targetSessionId,
+    requestId: stepIdem,
+    request: {
       message,
       sessionKey: params.sessionKey,
       idempotencyKey: stepIdem,
@@ -111,7 +127,6 @@ export async function runAgentStep(params: {
       channel,
       lane,
       extraSystemPrompt: params.extraSystemPrompt,
-      inputProvenance,
     },
     timeoutMs: 10_000,
   });
@@ -140,8 +155,9 @@ export async function runAgentStep(params: {
 const testing = {
   setDepsForTest(
     overrides?: Partial<{
-      agentCommandFromIngress: AgentCommandRunner;
+      agentCommandFromIngress: TestAgentCommandRunner;
       callGateway: GatewayCaller;
+      dispatchAgentHandoff: AgentHandoffDispatcher;
     }>,
   ) {
     agentStepDeps = overrides

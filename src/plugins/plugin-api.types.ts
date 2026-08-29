@@ -34,6 +34,7 @@ import type {
   PluginNextTurnInjection,
   PluginNextTurnInjectionEnqueueResult,
   PluginRunContextGetParams,
+  PluginRunContextConsumeParams,
   PluginRunContextPatch,
   PluginRuntimeLifecycleRegistration,
   PluginSessionActionRegistration,
@@ -151,6 +152,8 @@ type OpenClawPluginRunContextApi = {
   setRunContext: (patch: PluginRunContextPatch) => boolean;
   /** Read namespaced plugin data for a run. */
   getRunContext: (params: PluginRunContextGetParams) => PluginJsonValue | undefined;
+  /** Atomically read and delete one namespace, for one-shot run capabilities. */
+  consumeRunContext: (params: PluginRunContextConsumeParams) => PluginJsonValue | undefined;
   /** Clear one namespace or all namespaces this plugin owns for a run. */
   clearRunContext: (params: { runId: string; namespace?: string }) => void;
 };
@@ -380,6 +383,8 @@ export type OpenClawPluginApi = {
    * @deprecated Use `api.runContext.getRunContext(...)`.
    */
   getRunContext: (params: PluginRunContextGetParams) => PluginJsonValue | undefined;
+  /** Atomically read and delete one namespace, for one-shot run capabilities. */
+  consumeRunContext: (params: PluginRunContextConsumeParams) => PluginJsonValue | undefined;
   /**
    * Clear one namespace or all namespaces this plugin owns for a run.
    * @deprecated Use `api.runContext.clearRunContext(...)`.

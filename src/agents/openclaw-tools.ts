@@ -11,9 +11,12 @@ import type { ConversationReadInvocationOrigin } from "../channels/plugins/conve
 import { selectApplicableRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { callGateway } from "../gateway/call.js";
+import type { AdmittedInternalHandoff } from "../gateway/internal-agent-handoff.js";
 import { isEmbeddedMode } from "../infra/embedded-mode.js";
+import type { PluginAdmittedSessionDeliveryKind } from "../plugins/plugin-tool-execution-context.js";
 import { getActiveSecretsRuntimeConfigSnapshot } from "../secrets/runtime-state.js";
 import { getActiveRuntimeWebToolsMetadata } from "../secrets/runtime-web-tools-state.js";
+import type { InputProvenance } from "../sessions/input-provenance.js";
 import { isCronRunSessionKey } from "../sessions/session-key-utils.js";
 import type { SkillWorkshopRunOptions } from "../skills/workshop/types.js";
 import { resolveTranscriptsConfig } from "../transcripts/config.js";
@@ -194,6 +197,11 @@ export function createOpenClawTools(
     sessionId?: string;
     /** Trusted runtime-only authorization for one bounded cross-conversation recall pass. */
     conversationRecall?: ConversationRecallContext;
+    /** Host-normalized provenance for the current agent input. */
+    inputProvenance?: InputProvenance;
+    /** Immutable session delivery route copied at Gateway work admission. */
+    admittedSessionDeliveryKind?: PluginAdmittedSessionDeliveryKind;
+    admittedInternalHandoff?: AdmittedInternalHandoff;
     /**
      * Explicit one-shot local CLI runs should not keep plugin-owned process
      * resources alive after emitting their result.
@@ -647,6 +655,7 @@ export function createOpenClawTools(
           // is the gate in ensureConfiguredAgentMainSession).
           createSessionsSendTool({
             agentSessionKey: options?.agentSessionKey,
+            agentSessionId: options?.sessionId,
             agentChannel: options?.agentChannel,
             sandboxed: options?.sandboxed,
             config: resolvedConfig,
@@ -749,6 +758,13 @@ export function createOpenClawTools(
     ...(resolvedConfig ? { config: resolvedConfig } : {}),
     ...(options?.agentSessionKey ? { sessionKey: options.agentSessionKey } : {}),
     ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
+    ...(options?.inputProvenance ? { inputProvenance: options.inputProvenance } : {}),
+    ...(options?.admittedSessionDeliveryKind
+      ? { admittedSessionDeliveryKind: options.admittedSessionDeliveryKind }
+      : {}),
+    ...(options?.admittedInternalHandoff
+      ? { admittedInternalHandoff: options.admittedInternalHandoff }
+      : {}),
     ...(options?.currentChannelId ? { channelId: options.currentChannelId } : {}),
     loopDetection: resolveToolLoopDetectionConfig({ cfg: resolvedConfig, agentId: hookAgentId }),
   };
@@ -765,3 +781,4 @@ export function createOpenClawTools(
     )
     .map(wrapGatewayCallerIdentity);
 }
+/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

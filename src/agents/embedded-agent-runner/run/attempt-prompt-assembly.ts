@@ -109,6 +109,13 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
     workspaceDir: attempt.workspaceDir,
     modelProviderId: attempt.model.provider,
     modelId: attempt.model.id,
+    ...(attempt.inputProvenance ? { inputProvenance: attempt.inputProvenance } : {}),
+    ...(attempt.admittedSessionDeliveryKind
+      ? { admittedSessionDeliveryKind: attempt.admittedSessionDeliveryKind }
+      : {}),
+    ...(attempt.admittedInternalHandoff
+      ? { admittedInternalHandoff: attempt.admittedInternalHandoff }
+      : {}),
     trigger: attempt.trigger,
     ...buildAgentHookContextChannelFields(attempt),
     ...buildAgentHookContextIdentityFields({

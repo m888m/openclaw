@@ -9,7 +9,20 @@ import { parseSessionThreadInfo } from "../../config/sessions/thread-info.js";
 import { createTestRegistry } from "../../test-utils/channel-plugins.js";
 import { extractAssistantText, sanitizeTextContent } from "./chat-history-text.js";
 
-const callGatewayMock = vi.fn();
+const sessionsSendMocks = vi.hoisted(() => {
+  const callGateway = vi.fn();
+  const dispatchAgentHandoff = vi.fn(
+    async (params: { request: Record<string, unknown>; timeoutMs?: number }) => {
+      return await callGateway({
+        method: "agent",
+        params: params.request,
+        timeoutMs: params.timeoutMs ?? 10_000,
+      });
+    },
+  );
+  return { callGateway, dispatchAgentHandoff };
+});
+const callGatewayMock = sessionsSendMocks.callGateway;
 const inProcessCreationMock = vi.fn(
   async (..._args: [unknown, unknown, unknown]): Promise<unknown> => ({}),
 );
@@ -30,6 +43,12 @@ const facadeRuntimeMock = vi.hoisted(() => ({
 
 vi.mock("../../gateway/call.js", () => ({
   callGateway: (opts: unknown) => callGatewayMock(opts),
+}));
+vi.mock("../../gateway/internal-agent-handoff.js", () => ({
+  dispatchAgentHandoffInProcess: sessionsSendMocks.dispatchAgentHandoff,
+}));
+vi.mock("../subagent-announce-delivery.js", () => ({
+  loadSessionEntryByKey: vi.fn(() => ({ sessionId: "target-session" })),
 }));
 vi.mock("./in-process-gateway.js", () => ({
   callInProcessGatewayToolWithCreation: (method: unknown, params: unknown, creation: unknown) =>

@@ -24,6 +24,10 @@ import {
 } from "../../sessions/input-provenance.js";
 import { isSubagentSessionKey } from "../../sessions/session-key-utils.js";
 import {
+  consumeInternalAgentHandoffCapability,
+  type AdmittedInternalHandoff,
+} from "../internal-agent-handoff.js";
+import {
   isAcceptedAgentDedupePayload,
   readGatewayDedupeEntry,
   resolveAgentDedupeKeys,
@@ -35,7 +39,7 @@ import {
 import {
   resolveAllowModelOverrideFromClient,
   resolveCanUseCronRunContinuation,
-  resolveCanUseInternalRuntimeHandoff,
+  resolveCanUseInternalRuntimeControls,
 } from "./agent-handler-helpers.js";
 import type { AgentRunRequest } from "./agent-request-types.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
@@ -47,6 +51,7 @@ type AgentRequestPreflight = {
   lifecycleGeneration: string;
   allowModelOverride: boolean;
   canUseInternalRuntimeHandoff: boolean;
+  admittedInternalHandoff?: AdmittedInternalHandoff;
   canUseCronRunContinuation: boolean;
   expectedSession?: ExpectedExistingSessionConstraint;
   expectedExistingSessionId?: string;
@@ -81,8 +86,47 @@ export function prepareAgentRequestPreflight(
   }
   const request = params.params as AgentRunRequest;
   const cfg = params.context.getRuntimeConfig();
-  const canUseInternalRuntimeHandoff = resolveCanUseInternalRuntimeHandoff(params.client);
-  if (request.inputProvenance !== undefined && !canUseInternalRuntimeHandoff) {
+  const lifecycleGeneration = getAgentEventLifecycleGeneration();
+  const handoffCapability = params.client?.internal?.agentHandoffCapability;
+  const requestedSessionKey = request.sessionKey?.trim();
+  // The dispatcher records the target incarnation before handing the request
+  // to Gateway. Do not read the mutable session store here: the work-admission
+  // lease later revalidates this exact id and captures delivery from that
+  // admitted entry.
+  const targetSessionId = request.expectedExistingSessionId?.trim();
+  const admittedInternalHandoff = handoffCapability
+    ? targetSessionId && requestedSessionKey
+      ? consumeInternalAgentHandoffCapability({
+          capability: handoffCapability,
+          targetSessionKey: requestedSessionKey,
+          targetSessionId,
+          requestId: request.idempotencyKey,
+          lifecycleGeneration,
+        })
+      : undefined
+    : undefined;
+  if (handoffCapability && !admittedInternalHandoff) {
+    params.respond(
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        "internal agent handoff capability is missing, stale, or not bound to this target.",
+      ),
+    );
+    return undefined;
+  }
+  // An in-process capability is the only authority for sessions_send
+  // inter-session provenance. The caller-controlled AgentParams field is never
+  // used to mint or validate that authority.
+  const normalizedRequestedProvenance = normalizeInputProvenance(request.inputProvenance);
+  const isCallerDeclaredInterSessionHandoff =
+    normalizedRequestedProvenance?.kind === "inter_session";
+  const canUseInternalRuntimeControls = resolveCanUseInternalRuntimeControls(params.client);
+  if (
+    request.inputProvenance !== undefined &&
+    (isCallerDeclaredInterSessionHandoff || !canUseInternalRuntimeControls)
+  ) {
     params.respond(
       false,
       undefined,
@@ -93,6 +137,8 @@ export function prepareAgentRequestPreflight(
     );
     return undefined;
   }
+  const canUseInternalRuntimeHandoff =
+    canUseInternalRuntimeControls || admittedInternalHandoff !== undefined;
   const requestSessionKey = request.sessionKey?.trim();
   const collectorSession = findSwarmCollectorSession(requestSessionKey);
   // Collector children always use subagent session keys, so ordinary traffic
@@ -296,7 +342,7 @@ export function prepareAgentRequestPreflight(
     request,
     cfg,
     runId,
-    lifecycleGeneration: getAgentEventLifecycleGeneration(),
+    lifecycleGeneration,
     allowModelOverride,
     canUseInternalRuntimeHandoff,
     canUseCronRunContinuation,
@@ -310,7 +356,9 @@ export function prepareAgentRequestPreflight(
       groupChannel: request.groupChannel,
       groupSpace: request.groupSpace,
     }),
-    inputProvenance,
+    inputProvenance:
+      admittedInternalHandoff?.provenance ?? normalizeInputProvenance(request.inputProvenance),
+    admittedInternalHandoff,
     isRestartRecoveryResumeRun:
       canUseInternalRuntimeHandoff && isMainSessionRestartRecoveryInputProvenance(inputProvenance),
     preserveUserFacingSessionModelState:
