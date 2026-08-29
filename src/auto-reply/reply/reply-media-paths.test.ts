@@ -438,6 +438,7 @@ describe("createReplyMediaPathNormalizer", () => {
       "WA_MEDIA_DM_07\n⚠️ Media failed. Try sending a smaller supported file or a different format.",
     );
     expectNoMedia(result);
+    expect(getReplyPayloadMetadata(result)?.suppressTtsOnMediaFailure).toBe(true);
   });
 
   it("keeps surviving media and appends a warning when some reply media is dropped", async () => {
@@ -453,6 +454,7 @@ describe("createReplyMediaPathNormalizer", () => {
       "Here is the surviving attachment\n⚠️ Media failed. Try sending a smaller supported file or a different format.",
     );
     expectMedia(result, "https://example.com/ok.png", ["https://example.com/ok.png"]);
+    expect(getReplyPayloadMetadata(result)?.suppressTtsOnMediaFailure).toBe(true);
   });
 
   it("returns a warning-only text reply when media-only output is dropped upstream", async () => {

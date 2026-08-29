@@ -59,15 +59,18 @@ async function normalizeReplyPayloadMedia(params: {
   } catch (err) {
     logVerbose(`reply payload media normalization failed: ${String(err)}`);
     // Preserve the text reply and drop unusable media so channels can still send the answer.
-    return copyReplyPayloadMetadata(params.payload, {
-      ...params.payload,
-      text: params.suppressMediaFailureWarning
-        ? params.payload.text
-        : appendReplyMediaFailureWarning(params.payload.text),
-      mediaUrl: undefined,
-      mediaUrls: undefined,
-      audioAsVoice: false,
-    });
+    return setReplyPayloadMetadata(
+      copyReplyPayloadMetadata(params.payload, {
+        ...params.payload,
+        text: params.suppressMediaFailureWarning
+          ? params.payload.text
+          : appendReplyMediaFailureWarning(params.payload.text),
+        mediaUrl: undefined,
+        mediaUrls: undefined,
+        audioAsVoice: false,
+      }),
+      { suppressTtsOnMediaFailure: true },
+    );
   }
 }
 

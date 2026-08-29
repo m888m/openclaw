@@ -430,6 +430,10 @@ describe("buildReplyPayloads media filter integration", () => {
       mediaUrls: undefined,
       audioAsVoice: false,
     });
+    expect(
+      getReplyPayloadMetadata(expectDefined(replyPayloads[0], "failed media payload"))
+        ?.suppressTtsOnMediaFailure,
+    ).toBe(true);
     expectFields(replyPayloads[1], {
       text: "keep second",
     });
@@ -1146,6 +1150,10 @@ describe("buildReplyPayloads media filter integration", () => {
       mediaUrls: undefined,
       audioAsVoice: false,
     });
+    expect(
+      getReplyPayloadMetadata(expectDefined(replyPayloads[0], "failed media payload"))
+        ?.suppressTtsOnMediaFailure,
+    ).toBe(true);
   });
 
   it("extracts markdown image replies into final payload media urls", async () => {
