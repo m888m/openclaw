@@ -384,6 +384,22 @@ describe("createReplyMediaPathNormalizer", () => {
     expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
   });
 
+  it("delivers a generated voice reply from the managed outbound media root", async () => {
+    setTestEnvValue("OPENCLAW_STATE_DIR", "/Users/peter/.openclaw");
+    const normalize = createTestReplyMediaNormalizer();
+    const voicePath = "/Users/peter/.openclaw/media/outbound/cordy-reply.mp3";
+
+    const result = await normalize({
+      mediaUrls: [voicePath],
+      audioAsVoice: true,
+    });
+
+    expectMedia(result, voicePath, [voicePath]);
+    expect(result.audioAsVoice).toBe(true);
+    expect(getReplyPayloadMetadata(result)?.suppressTtsOnMediaFailure).toBeUndefined();
+    expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
+  });
+
   it("drops managed outbound media symlinks escaping the shared media root without sandbox mapping", async () => {
     if (process.platform === "win32") {
       return;
