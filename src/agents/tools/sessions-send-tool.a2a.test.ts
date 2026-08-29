@@ -69,6 +69,10 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
     });
     testing.setDepsForTest({
       callGateway,
+      loadSessionEntryByKey: (sessionKey) => ({
+        sessionId: `${sessionKey}:session`,
+        updatedAt: 1,
+      }),
     });
   });
 
@@ -92,6 +96,8 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
       message: "Test message",
       announceTimeoutMs: 10_000,
       maxPingPongTurns: 0,
+      requesterSessionKey: "agent:main:webchat:direct:requester",
+      requesterChannel: "webchat",
       roundOneReply: "Worker completed successfully",
     });
 
@@ -109,6 +115,8 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
       message: "Test message",
       announceTimeoutMs: 10_000,
       maxPingPongTurns: 0,
+      requesterSessionKey: "agent:main:webchat:direct:requester",
+      requesterChannel: "webchat",
       roundOneReply: "Worker completed successfully",
     });
 
@@ -303,6 +311,8 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
       message: "Test message",
       announceTimeoutMs: 10_000,
       maxPingPongTurns: 0,
+      requesterSessionKey: "agent:main:webchat:direct:requester",
+      requesterChannel: "webchat",
       roundOneReply: "Worker completed successfully",
     });
 
@@ -528,6 +538,8 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
         message: "Test message",
         announceTimeoutMs: 10_000,
         maxPingPongTurns: 0,
+        requesterSessionKey: "agent:main:webchat:direct:requester",
+        requesterChannel: "webchat",
         roundOneReply: "Worker completed successfully",
       });
 

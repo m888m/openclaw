@@ -21,7 +21,10 @@ import type { RuntimePluginToolGrant } from "../plugins/runtime/tool-grant.js";
 import type { PluginRuntime, RuntimeGatewayRequestOptions } from "../plugins/runtime/types.js";
 import type { PluginLogger, PluginOrigin } from "../plugins/types.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
-import type { InternalAgentHandoffCapability } from "./internal-agent-handoff.js";
+import type {
+  InternalAgentHandoffCapability,
+  InternalAgentHandoffSourceBinding,
+} from "./internal-agent-handoff.js";
 import { ADMIN_SCOPE } from "./method-scopes.js";
 import { normalizeOperatorScopeList, type OperatorScope } from "./operator-scopes.js";
 import {
@@ -251,6 +254,8 @@ type DispatchGatewayMethodInProcessOptions = {
   delegatedToolPolicyHandoff?: boolean;
   /** Host-only object capability; never accepted from a Gateway frame. */
   agentHandoffCapability?: InternalAgentHandoffCapability;
+  /** Independent exact source-incarnation binding for capability admission. */
+  agentHandoffSource?: InternalAgentHandoffSourceBinding;
   sessionCreation?: TrustedSessionCreation;
   requireScopedClient?: boolean;
   syntheticScopes?: string[];
@@ -296,6 +301,7 @@ export async function dispatchGatewayMethodInProcessRaw(
     ...(options?.agentHandoffCapability
       ? { agentHandoffCapability: options.agentHandoffCapability }
       : {}),
+    ...(options?.agentHandoffSource ? { agentHandoffSource: options.agentHandoffSource } : {}),
     ...(options?.sessionCreation ? { sessionCreation: options.sessionCreation } : {}),
     scopes: options?.syntheticScopes,
   });

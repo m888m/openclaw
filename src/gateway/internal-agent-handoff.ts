@@ -9,8 +9,24 @@
 import { getAgentEventLifecycleGeneration } from "../infra/agent-events.js";
 import type { InputProvenance } from "../sessions/input-provenance.js";
 
-const HANDOFF_PURPOSE = "sessions_send" as const;
-const HANDOFF_SOURCE_TOOL = "sessions_send" as const;
+export type InternalAgentHandoffPurpose =
+  | "sessions_send"
+  | "subagent_announce"
+  | "subagent_interrupted_resume"
+  | "main_session_restart_recovery"
+  | "agent_mediated_completion";
+
+export type InternalAgentHandoffSourceBinding = Readonly<{
+  sourceSessionKey: string;
+  sourceSessionId: string;
+}>;
+
+const AGENT_MEDIATED_COMPLETION_SOURCE_TOOLS = new Set([
+  "agent_harness_task",
+  "image_generate",
+  "music_generate",
+  "video_generate",
+]);
 
 // These declarations are exported only so generated boundary declarations can
 // name the opaque types.  The symbols have no runtime value; authority still
@@ -24,10 +40,10 @@ export type InternalAgentHandoffCapability = Readonly<{
 
 export type AdmittedInternalHandoff = Readonly<{
   readonly [admittedInternalHandoffBrand]: true;
-  readonly purpose: typeof HANDOFF_PURPOSE;
-  readonly sourceTool: typeof HANDOFF_SOURCE_TOOL;
+  readonly purpose: InternalAgentHandoffPurpose;
+  readonly sourceTool: string;
   readonly sourceSessionKey: string;
-  readonly sourceSessionId?: string;
+  readonly sourceSessionId: string;
   readonly sourceChannel?: string;
   readonly targetSessionKey: string;
   readonly targetSessionId: string;
@@ -39,8 +55,11 @@ export type AdmittedInternalHandoff = Readonly<{
 }>;
 
 type IssuedHandoff = {
+  readonly purpose: InternalAgentHandoffPurpose;
+  readonly provenanceKind: "inter_session" | "internal_system";
+  readonly sourceTool: string;
   readonly sourceSessionKey: string;
-  readonly sourceSessionId?: string;
+  readonly sourceSessionId: string;
   readonly sourceChannel?: string;
   readonly targetSessionKey: string;
   readonly targetSessionId: string;
@@ -75,18 +94,51 @@ function normalizeOptional(value: unknown): string | undefined {
 
 function freezeProvenance(params: IssuedHandoff): Readonly<InputProvenance> {
   return Object.freeze({
-    kind: "inter_session" as const,
+    kind: params.provenanceKind,
     sourceSessionKey: params.sourceSessionKey,
     ...(params.sourceChannel ? { sourceChannel: params.sourceChannel } : {}),
-    sourceTool: HANDOFF_SOURCE_TOOL,
+    sourceTool: params.sourceTool,
   });
+}
+
+function resolvePurposeProvenance(params: {
+  purpose?: InternalAgentHandoffPurpose;
+  sourceTool?: string;
+}): {
+  purpose: InternalAgentHandoffPurpose;
+  provenanceKind: "inter_session" | "internal_system";
+  sourceTool: string;
+} {
+  const purpose = params.purpose ?? "sessions_send";
+  switch (purpose) {
+    case "sessions_send":
+    case "subagent_announce":
+    case "subagent_interrupted_resume":
+      return { purpose, provenanceKind: "inter_session", sourceTool: purpose };
+    case "main_session_restart_recovery":
+      return { purpose, provenanceKind: "internal_system", sourceTool: purpose };
+    case "agent_mediated_completion": {
+      const sourceTool = normalizeRequired(params.sourceTool, "sourceTool").toLowerCase();
+      if (!AGENT_MEDIATED_COMPLETION_SOURCE_TOOLS.has(sourceTool)) {
+        throw new Error("sourceTool is not valid for an agent-mediated completion handoff.");
+      }
+      return { purpose, provenanceKind: "inter_session", sourceTool };
+    }
+    default: {
+      const exhaustivePurpose: never = purpose;
+      void exhaustivePurpose;
+      throw new Error("Unsupported internal agent handoff purpose.");
+    }
+  }
 }
 
 /** Issue a fresh, non-transferable capability from a trusted in-process caller. */
 export function issueInternalAgentHandoffCapability(params: {
+  purpose?: InternalAgentHandoffPurpose;
   sourceSessionKey: string;
-  sourceSessionId?: string;
+  sourceSessionId: string;
   sourceChannel?: string;
+  sourceTool?: string;
   targetSessionKey: string;
   targetSessionId: string;
   requestId: string;
@@ -95,7 +147,9 @@ export function issueInternalAgentHandoffCapability(params: {
   nowMs?: number;
 }): InternalAgentHandoffCapability {
   const nowMs = params.nowMs ?? Date.now();
+  const purposeProvenance = resolvePurposeProvenance(params);
   const sourceSessionKey = normalizeRequired(params.sourceSessionKey, "sourceSessionKey");
+  const sourceSessionId = normalizeRequired(params.sourceSessionId, "sourceSessionId");
   const targetSessionKey = normalizeRequired(params.targetSessionKey, "targetSessionKey");
   const targetSessionId = normalizeRequired(params.targetSessionId, "targetSessionId");
   const requestId = normalizeRequired(params.requestId, "requestId");
@@ -106,10 +160,9 @@ export function issueInternalAgentHandoffCapability(params: {
   const lifecycleGeneration =
     normalizeOptional(params.lifecycleGeneration) ?? getAgentEventLifecycleGeneration();
   const issued: IssuedHandoff = Object.freeze({
+    ...purposeProvenance,
     sourceSessionKey,
-    ...(normalizeOptional(params.sourceSessionId)
-      ? { sourceSessionId: normalizeOptional(params.sourceSessionId) }
-      : {}),
+    sourceSessionId,
     ...(normalizeOptional(params.sourceChannel)
       ? { sourceChannel: normalizeOptional(params.sourceChannel) }
       : {}),
@@ -131,8 +184,8 @@ export function issueInternalAgentHandoffCapability(params: {
  */
 export function consumeInternalAgentHandoffCapability(params: {
   capability: unknown;
-  sourceSessionKey?: string;
-  sourceSessionId?: string;
+  sourceSessionKey: string;
+  sourceSessionId: string;
   targetSessionKey: string;
   targetSessionId: string;
   requestId: string;
@@ -162,10 +215,10 @@ export function consumeInternalAgentHandoffCapability(params: {
   const lifecycleGeneration =
     normalizeOptional(params.lifecycleGeneration) ?? getAgentEventLifecycleGeneration();
   if (
-    (sourceSessionKey !== undefined && sourceSessionKey !== issued.sourceSessionKey) ||
-    (issued.sourceSessionId !== undefined &&
-      sourceSessionId !== undefined &&
-      sourceSessionId !== issued.sourceSessionId) ||
+    !sourceSessionKey ||
+    sourceSessionKey !== issued.sourceSessionKey ||
+    !sourceSessionId ||
+    sourceSessionId !== issued.sourceSessionId ||
     !targetSessionKey ||
     targetSessionKey !== issued.targetSessionKey ||
     !targetSessionId ||
@@ -178,10 +231,10 @@ export function consumeInternalAgentHandoffCapability(params: {
     return undefined;
   }
   const authority = Object.freeze({
-    purpose: HANDOFF_PURPOSE,
-    sourceTool: HANDOFF_SOURCE_TOOL,
+    purpose: issued.purpose,
+    sourceTool: issued.sourceTool,
     sourceSessionKey: issued.sourceSessionKey,
-    ...(issued.sourceSessionId ? { sourceSessionId: issued.sourceSessionId } : {}),
+    sourceSessionId: issued.sourceSessionId,
     ...(issued.sourceChannel ? { sourceChannel: issued.sourceChannel } : {}),
     targetSessionKey: issued.targetSessionKey,
     targetSessionId: issued.targetSessionId,
@@ -226,6 +279,9 @@ export function consumeAdmittedInternalAgentHandoffForPluginTool(params: {
   if (!state || state.state !== "admitted") {
     return false;
   }
+  // Burn before checking any caller-supplied binding. Failed owner/tool/call,
+  // lifecycle, or params probes must not leave a reusable run authority.
+  state.state = "closed";
   const nowMs = params.nowMs ?? Date.now();
   const pluginId = normalizeOptional(params.pluginId);
   const toolName = normalizeOptional(params.toolName);
@@ -244,6 +300,7 @@ export function consumeAdmittedInternalAgentHandoffForPluginTool(params: {
       sessionId !== state.authority.targetSessionId) ||
     toolCallId === undefined ||
     params.admittedSessionDeliveryKind !== "none" ||
+    getAgentEventLifecycleGeneration() !== state.authority.lifecycleGeneration ||
     nowMs > state.authority.deadlineMs ||
     params.canonicalParams === undefined
   ) {
@@ -275,21 +332,37 @@ export function closeAdmittedInternalAgentHandoff(value: unknown): void {
  * to a public WebSocket request because the capability never crosses that
  * boundary.
  */
-export async function dispatchAgentHandoffInProcess<T = { runId?: string }>(params: {
+export type InternalAgentHandoffDispatchParams = {
+  purpose?: InternalAgentHandoffPurpose;
   sourceSessionKey: string;
-  sourceSessionId?: string;
+  sourceSessionId: string;
   sourceChannel?: string;
+  sourceTool?: string;
   targetSessionKey: string;
   targetSessionId: string;
   requestId: string;
   request: Record<string, unknown>;
+  allowSyntheticCronRunContinuation?: boolean;
+  delegatedToolPolicyHandoff?: boolean;
+  expectFinal?: boolean;
+  internalDeliveryMediaUrls?: string[];
+  internalDeliverySuppressText?: boolean;
+  onAccepted?: (payload: unknown) => void;
   timeoutMs?: number;
-}): Promise<T> {
+};
+
+export function prepareInternalAgentHandoffDispatch(params: InternalAgentHandoffDispatchParams): {
+  capability: InternalAgentHandoffCapability;
+  source: InternalAgentHandoffSourceBinding;
+  request: Record<string, unknown>;
+} {
   const lifecycleGeneration = getAgentEventLifecycleGeneration();
   const capability = issueInternalAgentHandoffCapability({
+    purpose: params.purpose,
     sourceSessionKey: params.sourceSessionKey,
     sourceSessionId: params.sourceSessionId,
     sourceChannel: params.sourceChannel,
+    sourceTool: params.sourceTool,
     targetSessionKey: params.targetSessionKey,
     targetSessionId: params.targetSessionId,
     requestId: params.requestId,
@@ -303,10 +376,31 @@ export async function dispatchAgentHandoffInProcess<T = { runId?: string }>(para
   request.sessionKey = params.targetSessionKey;
   request.idempotencyKey = params.requestId;
   request.expectedExistingSessionId = params.targetSessionId;
+  return {
+    capability,
+    source: Object.freeze({
+      sourceSessionKey: normalizeRequired(params.sourceSessionKey, "sourceSessionKey"),
+      sourceSessionId: normalizeRequired(params.sourceSessionId, "sourceSessionId"),
+    }),
+    request,
+  };
+}
+
+export async function dispatchAgentHandoffInProcess<T = { runId?: string }>(
+  params: InternalAgentHandoffDispatchParams,
+): Promise<T> {
+  const prepared = prepareInternalAgentHandoffDispatch(params);
   const { dispatchGatewayMethodInProcess } = await import("./server-plugins.js");
-  return await dispatchGatewayMethodInProcess<T>("agent", request, {
+  return await dispatchGatewayMethodInProcess<T>("agent", prepared.request, {
     forceSyntheticClient: true,
-    agentHandoffCapability: capability,
+    agentHandoffCapability: prepared.capability,
+    agentHandoffSource: prepared.source,
+    allowSyntheticCronRunContinuation: params.allowSyntheticCronRunContinuation,
+    delegatedToolPolicyHandoff: params.delegatedToolPolicyHandoff,
+    expectFinal: params.expectFinal,
+    internalDeliveryMediaUrls: params.internalDeliveryMediaUrls,
+    internalDeliverySuppressText: params.internalDeliverySuppressText,
+    onAccepted: params.onAccepted,
     timeoutMs: params.timeoutMs ?? 10_000,
   });
 }

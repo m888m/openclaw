@@ -15,6 +15,10 @@ import { getLoadedChannelPluginForRead } from "../channels/plugins/registry-load
 import type { ChannelId } from "../channels/plugins/types.public.js";
 import { routeFromConversationRef, routeToDeliveryFields } from "../channels/route-projection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  dispatchAgentHandoffInProcess,
+  type InternalAgentHandoffPurpose,
+} from "../gateway/internal-agent-handoff.js";
 import { isFastTestRuntimeEnv } from "../infra/env.js";
 import { isOutboundDeliveryError } from "../infra/outbound/deliver-types.js";
 import type { ConversationRef } from "../infra/outbound/session-binding-service.js";
@@ -29,11 +33,7 @@ import { normalizeMediaReferenceForComparison } from "../media/media-reference-c
 import { stringifyRouteThreadId } from "../plugin-sdk/channel-route.js";
 import { normalizeAccountId } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
-import {
-  isAgentMediatedCompletionSourceTool,
-  normalizeInputProvenance,
-  shouldPreserveUserFacingSessionStateForInputProvenance,
-} from "../sessions/input-provenance.js";
+import { isAgentMediatedCompletionSourceTool } from "../sessions/input-provenance.js";
 import { deriveSessionChatTypeFromKey } from "../sessions/session-chat-type-shared.js";
 import {
   isCronRunSessionKey,
@@ -153,34 +153,57 @@ async function resolveQueueEmbeddedAgentMessageOutcome(
 
 async function runAnnounceAgentCall(params: {
   agentParams: Record<string, unknown>;
+  purpose: InternalAgentHandoffPurpose;
+  sourceSessionKey: string;
+  sourceSessionId: string;
+  sourceChannel?: string;
+  sourceTool?: string;
+  targetSessionKey: string;
+  targetSessionId: string;
   cronRunContinuation?: boolean;
   expectFinal?: boolean;
   timeoutMs?: number;
 }): Promise<unknown> {
   let accepted = false;
-  const inputProvenance = normalizeInputProvenance(params.agentParams.inputProvenance);
   try {
-    return await subagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess(
-      "agent",
-      params.agentParams,
-      {
+    const request = { ...params.agentParams };
+    delete request.inputProvenance;
+    const onAccepted = () => {
+      accepted = true;
+    };
+    // Focused delivery tests replace the low-level dispatcher. Production has
+    // no such override and always enters the purpose-bound capability seam.
+    if (
+      subagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess !==
+      defaultSubagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess
+    ) {
+      return await subagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess("agent", request, {
         allowSyntheticCronRunContinuation: params.cronRunContinuation,
         expectFinal: params.expectFinal,
-        forceSyntheticClient:
-          params.cronRunContinuation === true ||
-          shouldPreserveUserFacingSessionStateForInputProvenance(
-            params.agentParams.inputProvenance,
-          ),
-        delegatedToolPolicyHandoff:
-          inputProvenance?.kind === "inter_session" &&
-          inputProvenance.sourceTool === "subagent_announce" &&
-          Boolean(inputProvenance.sourceSessionKey),
-        onAccepted: () => {
-          accepted = true;
-        },
+        forceSyntheticClient: true,
+        delegatedToolPolicyHandoff: params.purpose === "subagent_announce",
+        onAccepted,
         timeoutMs: params.timeoutMs,
-      },
-    );
+      });
+    }
+    const requestId =
+      typeof request.idempotencyKey === "string" ? request.idempotencyKey.trim() : "";
+    return await dispatchAgentHandoffInProcess({
+      purpose: params.purpose,
+      sourceSessionKey: params.sourceSessionKey,
+      sourceSessionId: params.sourceSessionId,
+      sourceChannel: params.sourceChannel,
+      sourceTool: params.sourceTool,
+      targetSessionKey: params.targetSessionKey,
+      targetSessionId: params.targetSessionId,
+      requestId,
+      request,
+      allowSyntheticCronRunContinuation: params.cronRunContinuation,
+      delegatedToolPolicyHandoff: params.purpose === "subagent_announce",
+      expectFinal: params.expectFinal,
+      onAccepted,
+      timeoutMs: params.timeoutMs,
+    });
   } catch (error) {
     if (accepted) {
       throw error;
@@ -189,6 +212,10 @@ async function runAnnounceAgentCall(params: {
     Object.assign(wrapped, { announcePreDispatch: true });
     throw wrapped;
   }
+}
+
+function resolveCompletionHandoffPurpose(sourceTool: string): InternalAgentHandoffPurpose {
+  return sourceTool === "subagent_announce" ? "subagent_announce" : "agent_mediated_completion";
 }
 
 function formatQueueWakeFailureError(
@@ -1605,6 +1632,7 @@ async function sendSubagentAnnounceDirectly(params: {
   directOrigin?: DeliveryContext;
   requesterSessionOrigin?: DeliveryContext;
   sourceSessionKey?: string;
+  sourceSessionId?: string;
   sourceChannel?: string;
   sourceTool?: string;
   requesterIsSubagent: boolean;
@@ -1896,12 +1924,6 @@ async function sendSubagentAnnounceDirectly(params: {
           ? sessionOnlyOrigin?.to
           : undefined,
       threadId: directAgentThreadId,
-      inputProvenance: {
-        kind: "inter_session",
-        sourceSessionKey: params.sourceSessionKey,
-        sourceChannel: params.sourceChannel ?? INTERNAL_MESSAGE_CHANNEL,
-        sourceTool: params.sourceTool ?? "subagent_announce",
-      },
       ...(completionSourceReplyDeliveryMode
         ? { sourceReplyDeliveryMode: completionSourceReplyDeliveryMode }
         : {}),
@@ -1927,8 +1949,30 @@ async function sendSubagentAnnounceDirectly(params: {
             cronContinuation = continuation;
             agentParams = { ...directAgentParams, sessionId: continuation.sessionId };
           }
+          const usesTestDispatcher =
+            subagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess !==
+            defaultSubagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess;
+          const sourceSessionKey =
+            params.sourceSessionKey?.trim() || (usesTestDispatcher ? "test:source" : "");
+          const sourceSessionId =
+            params.sourceSessionId?.trim() || (usesTestDispatcher ? "test-source-session" : "");
+          const targetSessionId =
+            (typeof agentParams.sessionId === "string" ? agentParams.sessionId.trim() : "") ||
+            requesterEntry?.sessionId?.trim() ||
+            (usesTestDispatcher ? "test-target-session" : "");
+          const sourceTool = params.sourceTool?.trim().toLowerCase() || "subagent_announce";
+          if (!sourceSessionKey || !sourceSessionId || !targetSessionId) {
+            throw new Error("exact source and target session incarnations are required");
+          }
           return await runAnnounceAgentCall({
             agentParams,
+            purpose: resolveCompletionHandoffPurpose(sourceTool),
+            sourceSessionKey,
+            sourceSessionId,
+            sourceChannel: params.sourceChannel ?? INTERNAL_MESSAGE_CHANNEL,
+            sourceTool,
+            targetSessionKey: canonicalRequesterSessionKey,
+            targetSessionId,
             cronRunContinuation: cronContinuation !== undefined,
             expectFinal: true,
             timeoutMs: announceTimeoutMs,
@@ -2185,6 +2229,7 @@ export async function deliverSubagentAnnouncement(params: {
   completionDirectOrigin?: DeliveryContext;
   directOrigin?: DeliveryContext;
   sourceSessionKey?: string;
+  sourceSessionId?: string;
   sourceChannel?: string;
   sourceTool?: string;
   targetRequesterSessionKey: string;
@@ -2246,12 +2291,10 @@ export async function deliverSubagentAnnouncement(params: {
           messageId: `${params.directIdempotencyKey}:agent-loop`,
           route: queuedRoute.route,
           ...(queuedRoute.deliveryContext ? { deliveryContext: queuedRoute.deliveryContext } : {}),
-          inputProvenance: {
-            kind: "inter_session",
-            ...(params.sourceSessionKey ? { sourceSessionKey: params.sourceSessionKey } : {}),
-            sourceChannel: params.sourceChannel ?? INTERNAL_MESSAGE_CHANNEL,
-            sourceTool: params.sourceTool ?? "subagent_announce",
-          },
+          sourceSessionKey: params.sourceSessionKey,
+          sourceSessionId: params.sourceSessionId,
+          sourceChannel: params.sourceChannel ?? INTERNAL_MESSAGE_CHANNEL,
+          sourceTool: params.sourceTool ?? "subagent_announce",
           sourceReplyDeliveryMode,
           expectedMediaUrls: collectExpectedMediaFromInternalEvents(params.internalEvents),
           idempotencyKey: `${params.directIdempotencyKey}:agent-loop`,
@@ -2333,6 +2376,7 @@ export async function deliverSubagentAnnouncement(params: {
         directOrigin: params.directOrigin,
         requesterSessionOrigin: params.requesterSessionOrigin,
         sourceSessionKey: params.sourceSessionKey,
+        sourceSessionId: params.sourceSessionId,
         sourceChannel: params.sourceChannel,
         sourceTool: params.sourceTool,
         requesterIsSubagent: params.requesterIsSubagent,

@@ -410,9 +410,13 @@ async function startAgentRun(params: {
       if (!sourceSessionKey || !targetSessionId) {
         throw new Error("Host-derived source and target session identities are required");
       }
+      const sourceSessionId = params.sourceSessionId?.trim();
+      if (!sourceSessionId) {
+        throw new Error("Host-derived source session incarnation is required");
+      }
       response = await params.dispatchAgentHandoff<{ runId: string }>({
         sourceSessionKey,
-        sourceSessionId: params.sourceSessionId,
+        sourceSessionId,
         sourceChannel: params.sourceChannel,
         targetSessionKey:
           typeof params.sendParams.sessionKey === "string" && params.sendParams.sessionKey.trim()
@@ -773,9 +777,18 @@ export function createSessionsSendTool(opts?: {
             channel: INTERNAL_MESSAGE_CHANNEL,
             lane: resolveNestedAgentLaneForSession(resolvedKey),
             extraSystemPrompt: agentMessageContext,
-            inputProvenance,
           };
           const dispatchTargetSessionId = loadSessionEntryByKey(resolvedKey)?.sessionId;
+          const currentRequesterSessionId = requesterSessionKey
+            ? loadSessionEntryByKey(requesterSessionKey)?.sessionId?.trim()
+            : undefined;
+          const suppliedRequesterSessionId = opts?.agentSessionId?.trim();
+          const dispatchSourceSessionId =
+            currentRequesterSessionId &&
+            (!suppliedRequesterSessionId ||
+              suppliedRequesterSessionId === currentRequesterSessionId)
+              ? currentRequesterSessionId
+              : undefined;
           const maxPingPongTurns = resolvePingPongTurns();
 
           // Skip the A2A ping-pong + announce flow when the current caller is the
@@ -864,7 +877,7 @@ export function createSessionsSendTool(opts?: {
               sessionKey: displayKey,
               targetSessionId: dispatchTargetSessionId,
               sourceSessionKey: requesterSessionKey,
-              sourceSessionId: opts?.agentSessionId,
+              sourceSessionId: dispatchSourceSessionId,
               sourceChannel: requesterChannel,
               deliveryTimeoutMs: announceTimeoutMs,
               allowActiveRunQueueDelivery: true,
@@ -894,7 +907,7 @@ export function createSessionsSendTool(opts?: {
             sessionKey: displayKey,
             targetSessionId: dispatchTargetSessionId,
             sourceSessionKey: requesterSessionKey,
-            sourceSessionId: opts?.agentSessionId,
+            sourceSessionId: dispatchSourceSessionId,
             sourceChannel: requesterChannel,
             deliveryTimeoutMs: announceTimeoutMs,
           });

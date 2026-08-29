@@ -59,6 +59,7 @@ describe("runAgentStep", () => {
       runAgentStep({
         sessionKey: "agent:main:subagent:child",
         sourceSessionKey: "agent:main:source",
+        sourceSessionId: "target-session",
         message: "hello",
         extraSystemPrompt: "reply briefly",
         timeoutMs: 10_000,
@@ -105,6 +106,7 @@ describe("runAgentStep", () => {
       runAgentStep({
         sessionKey: "agent:main:subagent:child",
         sourceSessionKey: "agent:main:source",
+        sourceSessionId: "target-session",
         message: "hello",
         extraSystemPrompt: "reply briefly",
         timeoutMs: 10_000,
@@ -135,6 +137,7 @@ describe("runAgentStep", () => {
     await runAgentStep({
       sessionKey: "agent:main:subagent:child",
       sourceSessionKey: "agent:main:source",
+      sourceSessionId: "target-session",
       message: "internal announce step",
       transcriptMessage: "",
       extraSystemPrompt: "announce only",
@@ -180,6 +183,7 @@ describe("runAgentStep", () => {
       runAgentStep({
         sessionKey: "agent:main:subagent:child",
         sourceSessionKey: "agent:main:source",
+        sourceSessionId: "target-session",
         message: "internal announce step",
         transcriptMessage: "",
         extraSystemPrompt: "announce only",
@@ -217,6 +221,7 @@ describe("runAgentStep", () => {
       runAgentStep({
         sessionKey: "agent:main:subagent:child",
         sourceSessionKey: "agent:main:source",
+        sourceSessionId: "target-session",
         message: "internal announce step",
         transcriptMessage: "",
         extraSystemPrompt: "announce only",

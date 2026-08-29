@@ -11,6 +11,7 @@ import {
   stripLeadingSilentToken,
   stripSilentToken,
 } from "../auto-reply/tokens.js";
+import { dispatchAgentHandoffInProcess } from "../gateway/internal-agent-handoff.js";
 import { logWarn } from "../logger.js";
 import { defaultRuntime } from "../runtime.js";
 import { isCronSessionKey } from "../sessions/session-key-utils.js";
@@ -191,28 +192,41 @@ async function wakeSubagentRunAfterDescendants(params: {
 
   let wakeRunId;
   try {
+    const childSessionId = childEntry?.sessionId?.trim();
+    if (!childSessionId) {
+      return false;
+    }
     const wakeResponse = await runAnnounceDeliveryWithRetry<{ runId?: string }>({
       operation: "descendant wake agent call",
       signal: params.signal,
-      run: async () =>
-        await subagentAnnounceDeps.dispatchGatewayMethodInProcess(
-          "agent",
-          {
-            sessionKey: params.childSessionKey,
-            message: wakeMessage,
-            deliver: false,
-            inputProvenance: {
-              kind: "inter_session",
-              sourceSessionKey: params.childSessionKey,
-              sourceChannel: INTERNAL_MESSAGE_CHANNEL,
-              sourceTool: "subagent_announce",
-            },
-            idempotencyKey: buildAnnounceIdempotencyKey(`${params.announceId}:wake`),
-          },
-          {
+      run: async () => {
+        const request = {
+          sessionKey: params.childSessionKey,
+          message: wakeMessage,
+          deliver: false,
+          idempotencyKey: buildAnnounceIdempotencyKey(`${params.announceId}:wake`),
+        };
+        if (
+          subagentAnnounceDeps.dispatchGatewayMethodInProcess !==
+          defaultSubagentAnnounceDeps.dispatchGatewayMethodInProcess
+        ) {
+          return await subagentAnnounceDeps.dispatchGatewayMethodInProcess("agent", request, {
             timeoutMs: announceTimeoutMs,
-          },
-        ),
+          });
+        }
+        return await dispatchAgentHandoffInProcess({
+          purpose: "subagent_announce",
+          sourceSessionKey: params.childSessionKey,
+          sourceSessionId: childSessionId,
+          sourceChannel: INTERNAL_MESSAGE_CHANNEL,
+          targetSessionKey: params.childSessionKey,
+          targetSessionId: childSessionId,
+          requestId: buildAnnounceIdempotencyKey(`${params.announceId}:wake`),
+          request,
+          delegatedToolPolicyHandoff: true,
+          timeoutMs: announceTimeoutMs,
+        });
+      },
     });
     wakeRunId = normalizeOptionalString(wakeResponse?.runId) ?? "";
   } catch {
@@ -588,6 +602,7 @@ export async function runSubagentAnnounceFlow(params: {
       completionDirectOrigin,
       directOrigin,
       sourceSessionKey: params.childSessionKey,
+      sourceSessionId: announceSessionId,
       sourceChannel: INTERNAL_MESSAGE_CHANNEL,
       sourceTool: "subagent_announce",
       targetRequesterSessionKey,

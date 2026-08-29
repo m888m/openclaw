@@ -33,7 +33,7 @@ import {
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizeMediaReferenceForComparison } from "../media/media-reference-comparison.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel.js";
-import { dispatchGatewayMethodInProcess } from "./server-plugins.js";
+import { dispatchAgentHandoffInProcess } from "./internal-agent-handoff.js";
 import { loadSessionEntry } from "./session-utils.js";
 
 const log = createSubsystemLogger("gateway/restart-sentinel");
@@ -321,7 +321,20 @@ export async function deliverQueuedGeneratedMediaAgentTurn(params: {
   }
   const entry = params.entry;
   const route = entry.route;
-  if (!route || entry.inputProvenance?.kind !== "inter_session" || !entry.sourceReplyDeliveryMode) {
+  if (!route || !entry.sourceReplyDeliveryMode) {
+    return false;
+  }
+  const sourceSessionKey = entry.sourceSessionKey?.trim();
+  const sourceSessionId = entry.sourceSessionId?.trim();
+  const sourceTool = entry.sourceTool?.trim().toLowerCase();
+  if (!sourceSessionKey || !sourceSessionId || !sourceTool) {
+    if (entry.inputProvenance?.kind === "inter_session") {
+      return await deadLetterSessionDelivery(
+        entry,
+        "queued agent turn lacks an exact purpose-bound source incarnation",
+        params.stateDir,
+      );
+    }
     return false;
   }
 
@@ -418,15 +431,30 @@ export async function deliverQueuedGeneratedMediaAgentTurn(params: {
   const sourceReplyDeliveryMode = "automatic" as const;
   const cronLifecycleRevision = params.sessionEntry?.cronRunContinuation?.lifecycleRevision?.trim();
   const cronSessionId = cronLifecycleRevision ? params.sessionEntry?.sessionId?.trim() : undefined;
+  const targetSessionId = params.sessionEntry?.sessionId?.trim();
+  if (!targetSessionId) {
+    return await deadLetterSessionDelivery(
+      entry,
+      "queued generated-media agent turn lost its exact target session incarnation",
+      params.stateDir,
+    );
+  }
   // Fence before gateway admission. Recovery clears it only for an explicit
   // pre-acceptance safe retry; accepted or deduped runs may already have effects.
   await markSessionDeliveryAttemptStarted(entry, ...sessionDeliveryStateDirArgs(params.stateDir));
   let accepted = false;
   let response: unknown;
   try {
-    response = await dispatchGatewayMethodInProcess(
-      "agent",
-      {
+    response = await dispatchAgentHandoffInProcess({
+      purpose: "agent_mediated_completion",
+      sourceSessionKey,
+      sourceSessionId,
+      sourceChannel: entry.sourceChannel,
+      sourceTool,
+      targetSessionKey: params.canonicalKey,
+      targetSessionId,
+      requestId: queuedRunId,
+      request: {
         sessionKey: params.canonicalKey,
         message: entry.message,
         deliver:
@@ -437,23 +465,19 @@ export async function deliverQueuedGeneratedMediaAgentTurn(params: {
         to: route.to,
         threadId: route.threadId,
         ...(cronSessionId ? { sessionId: cronSessionId } : {}),
-        inputProvenance: entry.inputProvenance,
         sourceReplyDeliveryMode,
         disableMessageTool: true,
         forceRestartSafeTools: true,
         idempotencyKey: queuedRunId,
       },
-      {
-        ...(cronSessionId ? { allowSyntheticCronRunContinuation: true } : {}),
-        expectFinal: true,
-        forceSyntheticClient: true,
-        internalDeliveryMediaUrls: entry.expectedMediaUrls ?? [],
-        ...(entry.suppressTextDelivery === true ? { internalDeliverySuppressText: true } : {}),
-        onAccepted: () => {
-          accepted = true;
-        },
+      allowSyntheticCronRunContinuation: Boolean(cronSessionId),
+      expectFinal: true,
+      internalDeliveryMediaUrls: entry.expectedMediaUrls ?? [],
+      internalDeliverySuppressText: entry.suppressTextDelivery === true,
+      onAccepted: () => {
+        accepted = true;
       },
-    );
+    });
   } catch (error) {
     if (!accepted) {
       throw new SessionDeliverySafeRetryError(

@@ -233,6 +233,7 @@ export async function deliverAgentHarnessTaskCompletion(params: {
     completionDirectOrigin: completionDirectOrigin ?? directOrigin,
     directOrigin,
     sourceSessionKey: childSessionKey,
+    sourceSessionId: childSessionId,
     sourceChannel: INTERNAL_MESSAGE_CHANNEL,
     sourceTool: AGENT_HARNESS_COMPLETION_SOURCE_TOOL,
     targetRequesterSessionKey: requesterSessionKey,

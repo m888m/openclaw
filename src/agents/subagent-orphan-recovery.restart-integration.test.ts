@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setRuntimeConfigSnapshot } from "../config/config.js";
+import type { InternalAgentHandoffDispatchParams } from "../gateway/internal-agent-handoff.js";
 import type { GatewayRecoveryRuntime } from "../gateway/server-instance-runtime.types.js";
 import { createRunningTaskRun } from "../tasks/detached-task-runtime.js";
 import { findTaskByRunId } from "../tasks/task-registry.js";
@@ -41,6 +42,8 @@ const dispatchAgent = vi.fn(async (_payload: Record<string, unknown>, _timeoutMs
 }));
 const gatewayRuntime: GatewayRecoveryRuntime = {
   dispatchAgent: dispatchAgent as GatewayRecoveryRuntime["dispatchAgent"],
+  dispatchAgentHandoff: async <T = unknown>(params: InternalAgentHandoffDispatchParams) =>
+    (await dispatchAgent(params.request, params.timeoutMs)) as T,
   waitForAgent: vi.fn(),
   sendRecoveryNotice: vi.fn(),
 };
@@ -178,6 +181,15 @@ describe("subagent orphan recovery — faithful restart path", () => {
       updatedAt: now,
       abortedLastRun: true,
       defaultSessionId: "sess-fresh-aborted",
+    });
+    await writeSubagentSessionEntry({
+      stateDir: tempStateDir!,
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      sessionId: "sess-main-requester",
+      updatedAt: now,
+      abortedLastRun: false,
+      defaultSessionId: "sess-main-requester",
     });
     const record = makeRunRecord({
       runId,

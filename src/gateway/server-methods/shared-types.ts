@@ -26,7 +26,10 @@ import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
 import type { ChatAbortControllerEntry } from "../chat-abort.js";
 import type { GatewayHotReloadStatus } from "../config-reload-status.types.js";
 import type { ExecApprovalManager, ExecApprovalRecord } from "../exec-approval-manager.js";
-import type { InternalAgentHandoffCapability } from "../internal-agent-handoff.js";
+import type {
+  InternalAgentHandoffCapability,
+  InternalAgentHandoffSourceBinding,
+} from "../internal-agent-handoff.js";
 import type { GatewayMethodRegistryView } from "../methods/descriptor.js";
 import type { NodeRegistry } from "../node-registry.js";
 import type { PluginNodeCapabilitySurface } from "../plugin-node-capability.js";
@@ -101,8 +104,10 @@ export type GatewayClient = {
     runtimePluginToolGrant?: RuntimePluginToolGrant;
     /** In-process subagent-completion handoff eligible for verified policy inheritance. */
     delegatedToolPolicyHandoff?: true;
-    /** Module-private one-shot authority for a sessions_send agent run. */
+    /** Module-private one-shot authority for one purpose-bound internal agent run. */
     agentHandoffCapability?: InternalAgentHandoffCapability;
+    /** Independent exact source-incarnation binding consumed with the capability. */
+    agentHandoffSource?: InternalAgentHandoffSourceBinding;
   };
 };
 

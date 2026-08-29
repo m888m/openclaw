@@ -16,6 +16,7 @@ function admit(requestId: string) {
   const lifecycleGeneration = getAgentEventLifecycleGeneration();
   const capability = issueInternalAgentHandoffCapability({
     sourceSessionKey: "agent:clawy:operator",
+    sourceSessionId: "source-session-1",
     targetSessionKey,
     targetSessionId,
     requestId,
@@ -23,6 +24,8 @@ function admit(requestId: string) {
   });
   const authority = consumeInternalAgentHandoffCapability({
     capability,
+    sourceSessionKey: "agent:clawy:operator",
+    sourceSessionId: "source-session-1",
     targetSessionKey,
     targetSessionId,
     requestId,

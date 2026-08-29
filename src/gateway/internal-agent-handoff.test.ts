@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { getAgentEventLifecycleGeneration } from "../infra/agent-events.js";
+import {
+  getAgentEventLifecycleGeneration,
+  rotateAgentEventLifecycleGeneration,
+} from "../infra/agent-events.js";
 
 const gatewayDispatch = vi.hoisted(() =>
   vi.fn(async (..._args: unknown[]) => ({ runId: "accepted-run" })),
@@ -16,6 +19,7 @@ import {
 function issue(overrides: Partial<Parameters<typeof issueInternalAgentHandoffCapability>[0]> = {}) {
   return issueInternalAgentHandoffCapability({
     sourceSessionKey: "agent:source:main",
+    sourceSessionId: "source-session-1",
     targetSessionKey: "agent:target:main",
     targetSessionId: "target-session-1",
     requestId: "handoff-1",
@@ -27,6 +31,8 @@ function issue(overrides: Partial<Parameters<typeof issueInternalAgentHandoffCap
 function consume(capability: unknown, overrides: Record<string, unknown> = {}) {
   return consumeInternalAgentHandoffCapability({
     capability,
+    sourceSessionKey: "agent:source:main",
+    sourceSessionId: "source-session-1",
     targetSessionKey: "agent:target:main",
     targetSessionId: "target-session-1",
     requestId: "handoff-1",
@@ -36,6 +42,12 @@ function consume(capability: unknown, overrides: Record<string, unknown> = {}) {
 }
 
 describe("internal agent handoff capability", () => {
+  it("requires the exact source key and source incarnation at admission", () => {
+    const capability = issue({ sourceSessionId: "source-session-1" });
+
+    expect(consume(capability, { sourceSessionId: "" })).toBeUndefined();
+  });
+
   it("does not accept clones and is one-shot at admission", () => {
     const capability = issue();
     expect(consume({ ...(capability as object) })).toBeUndefined();
@@ -103,6 +115,27 @@ describe("internal agent handoff capability", () => {
     ).toBe(false);
   });
 
+  it("rejects plugin consumption after the Gateway lifecycle rotates", () => {
+    const capability = issue({ requestId: "rotated-plugin-run" });
+    const authority = consume(capability, { requestId: "rotated-plugin-run" });
+    expect(authority).toBeDefined();
+    rotateAgentEventLifecycleGeneration();
+
+    expect(
+      consumeAdmittedInternalAgentHandoffForPluginTool({
+        authority,
+        pluginId: "tony-postman-a2a",
+        toolName: "postman_lookup",
+        toolCallId: "call-after-rotation",
+        runId: "rotated-plugin-run",
+        sessionKey: "agent:target:main",
+        sessionId: "target-session-1",
+        canonicalParams: Object.freeze({}),
+        admittedSessionDeliveryKind: "none",
+      }),
+    ).toBe(false);
+  });
+
   it("dispatches only through the in-process Gateway seam and strips public provenance", async () => {
     gatewayDispatch.mockClear();
     const request = {
@@ -117,6 +150,7 @@ describe("internal agent handoff capability", () => {
       import("./internal-agent-handoff.js").then(({ dispatchAgentHandoffInProcess }) =>
         dispatchAgentHandoffInProcess({
           sourceSessionKey: "agent:source:main",
+          sourceSessionId: "source-session-1",
           targetSessionKey: "agent:target:main",
           targetSessionId: "target-session-1",
           requestId: "handoff-dispatch",
@@ -136,5 +170,11 @@ describe("internal agent handoff capability", () => {
     expect(dispatchedParams).not.toHaveProperty("inputProvenance");
     expect(options).toMatchObject({ forceSyntheticClient: true });
     expect(options).toHaveProperty("agentHandoffCapability");
+    expect(options).toMatchObject({
+      agentHandoffSource: {
+        sourceSessionKey: "agent:source:main",
+        sourceSessionId: "source-session-1",
+      },
+    });
   });
 });

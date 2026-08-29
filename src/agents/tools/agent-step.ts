@@ -68,6 +68,7 @@ export async function runAgentStep(params: {
   transcriptMessage?: string;
   /** Host-derived source identity; protected handoffs never infer this from the target. */
   sourceSessionKey: string;
+  sourceSessionId: string;
   sourceChannel?: string;
   sourceTool?: string;
 }): Promise<string | undefined> {
@@ -109,11 +110,16 @@ export async function runAgentStep(params: {
   // host dispatcher. `transcriptMessage` remains part of the caller contract
   // for compatibility, but is intentionally not accepted as Gateway authority.
   const targetSessionId = loadSessionEntryByKey(params.sessionKey)?.sessionId?.trim();
+  const currentSourceSessionId = loadSessionEntryByKey(params.sourceSessionKey)?.sessionId?.trim();
+  if (!currentSourceSessionId || currentSourceSessionId !== params.sourceSessionId.trim()) {
+    throw new Error("Host-derived source session incarnation is unavailable or changed");
+  }
   if (!targetSessionId) {
     throw new Error("Host-derived target session identity is required");
   }
   const response = await agentStepDeps.dispatchAgentHandoff<{ runId: string }>({
     sourceSessionKey: params.sourceSessionKey,
+    sourceSessionId: currentSourceSessionId,
     sourceChannel: params.sourceChannel,
     targetSessionKey: params.sessionKey,
     targetSessionId,

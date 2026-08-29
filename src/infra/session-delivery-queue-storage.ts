@@ -61,6 +61,12 @@ export type QueuedSessionDeliveryPayload =
       expectedSessionId?: string;
       route?: SessionDeliveryRoute;
       deliveryContext?: SessionDeliveryContext;
+      /** Exact host-owned source binding for a purpose-bound recovery turn. */
+      sourceSessionKey?: string;
+      sourceSessionId?: string;
+      sourceChannel?: string;
+      sourceTool?: string;
+      /** Legacy persisted field. Recovery never treats it as authority. */
       inputProvenance?: InputProvenance;
       sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
       expectedMediaUrls?: string[];

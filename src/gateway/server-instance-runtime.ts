@@ -10,6 +10,10 @@ import type {
   GatewayApprovalResolved,
 } from "../infra/approval-gateway-runtime.types.js";
 import { createApprovalNativeRouteCoordinator } from "../infra/approval-native-route-coordinator.js";
+import {
+  prepareInternalAgentHandoffDispatch,
+  type InternalAgentHandoffDispatchParams,
+} from "./internal-agent-handoff.js";
 import { APPROVALS_SCOPE, WRITE_SCOPE } from "./method-scopes.js";
 import type { GatewayMethodRegistry } from "./methods/registry.js";
 import { dispatchGatewayRequestInProcess } from "./server-in-process-dispatch.js";
@@ -75,6 +79,21 @@ export function createGatewayInstanceRuntime(
         payload,
         timeoutMs,
       }),
+    dispatchAgentHandoff: async <T>(params: InternalAgentHandoffDispatchParams) => {
+      const prepared = prepareInternalAgentHandoffDispatch(params);
+      const client = createSyntheticPluginRuntimeClient({
+        agentHandoffCapability: prepared.capability,
+        agentHandoffSource: prepared.source,
+        cronRunContinuation: params.allowSyntheticCronRunContinuation === true,
+      });
+      return await dispatch<T>({
+        allowedMethods: recoveryMethods,
+        client,
+        method: "agent",
+        payload: prepared.request,
+        timeoutMs: params.timeoutMs,
+      });
+    },
     waitForAgent: async <T>(payload: Record<string, unknown>, timeoutMs?: number) =>
       await dispatch<T>({
         allowedMethods: recoveryMethods,

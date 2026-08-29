@@ -17,6 +17,7 @@ import {
   readLatestAssistantReplySnapshot,
   waitForAgentRun,
 } from "../run-wait.js";
+import { loadSessionEntryByKey } from "../subagent-announce-delivery.js";
 import { runAgentStep } from "./agent-step.js";
 import { resolveAnnounceTarget } from "./sessions-announce-target.js";
 import {
@@ -37,10 +38,12 @@ const defaultSessionsSendA2ADeps = {
     const { callGateway } = await import("../../gateway/call.js");
     return callGateway<T>(opts);
   },
+  loadSessionEntryByKey,
 };
 
 let sessionsSendA2ADeps: {
   callGateway: GatewayCaller;
+  loadSessionEntryByKey: typeof loadSessionEntryByKey;
 } = defaultSessionsSendA2ADeps;
 
 function isDeliveryFailureWait(wait: AgentWaitResult): boolean {
@@ -48,6 +51,14 @@ function isDeliveryFailureWait(wait: AgentWaitResult): boolean {
     (wait.status === "error" && !isRecoverableAgentWaitError(wait.error)) ||
     (wait.status === "timeout" && wait.pendingError === true)
   );
+}
+
+function requireCurrentSourceSessionId(sessionKey: string): string {
+  const sessionId = sessionsSendA2ADeps.loadSessionEntryByKey(sessionKey)?.sessionId?.trim();
+  if (!sessionId) {
+    throw new Error(`Host-derived source session incarnation is unavailable for ${sessionKey}`);
+  }
+  return sessionId;
 }
 
 async function deliverAnnounceReply(params: {
@@ -133,6 +144,7 @@ export async function runSessionsSendA2AFlow(params: {
             timeoutMs: params.announceTimeoutMs,
             lane: resolveNestedAgentLaneForSession(params.requesterSessionKey),
             sourceSessionKey: params.targetSessionKey,
+            sourceSessionId: requireCurrentSourceSessionId(params.targetSessionKey),
             sourceTool: "sessions_send",
           });
         }
@@ -202,6 +214,7 @@ export async function runSessionsSendA2AFlow(params: {
           timeoutMs: params.announceTimeoutMs,
           lane: resolveNestedAgentLaneForSession(currentSessionKey),
           sourceSessionKey: nextSessionKey,
+          sourceSessionId: requireCurrentSourceSessionId(nextSessionKey),
           sourceChannel:
             nextSessionKey === params.requesterSessionKey ? params.requesterChannel : targetChannel,
           sourceTool: "sessions_send",
@@ -241,6 +254,7 @@ export async function runSessionsSendA2AFlow(params: {
       lane: resolveNestedAgentLaneForSession(params.targetSessionKey),
       transcriptMessage: "",
       sourceSessionKey: params.requesterSessionKey,
+      sourceSessionId: requireCurrentSourceSessionId(params.requesterSessionKey),
       sourceChannel: params.requesterChannel,
       sourceTool: "sessions_send",
     });
@@ -266,7 +280,12 @@ export async function runSessionsSendA2AFlow(params: {
 }
 
 const testing = {
-  setDepsForTest(overrides?: Partial<{ callGateway: GatewayCaller }>) {
+  setDepsForTest(
+    overrides?: Partial<{
+      callGateway: GatewayCaller;
+      loadSessionEntryByKey: typeof loadSessionEntryByKey;
+    }>,
+  ) {
     sessionsSendA2ADeps = overrides
       ? {
           ...defaultSessionsSendA2ADeps,

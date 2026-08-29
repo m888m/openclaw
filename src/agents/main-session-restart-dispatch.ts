@@ -18,7 +18,6 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { findRestartRecoveryUnsafeReplyHook } from "../plugins/restart-recovery-hook-safety.js";
 import { CommandLane } from "../process/lanes.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
-import { MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL } from "../sessions/input-provenance.js";
 import { resolveSendPolicy } from "../sessions/send-policy.js";
 import {
   deliveryContextFromSession,
@@ -452,11 +451,6 @@ export async function resumeMainSession(params: {
         ? { sourceReplyDeliveryMode: params.entry.restartRecoverySourceReplyDeliveryMode }
         : {}),
       ...(params.forceRestartSafeTools ? { forceRestartSafeTools: true } : {}),
-      inputProvenance: {
-        kind: "internal_system",
-        sourceSessionKey: dispatchSessionKey,
-        sourceTool: MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL,
-      },
     };
     if (deliveryContext) {
       agentParams.channel = deliveryContext.channel;
@@ -472,11 +466,24 @@ export async function resumeMainSession(params: {
     if (params.forceRestartSafeTools) {
       log.info(`dispatching restart-safe recovery for ${params.sessionKey}`);
     }
+    const dispatchAgentHandoff = params.gatewayRuntime.dispatchAgentHandoff;
+    if (!dispatchAgentHandoff) {
+      throw new Error("purpose-bound restart recovery dispatcher is unavailable");
+    }
     dispatchStarted = true;
-    const dispatchResult = await params.gatewayRuntime.dispatchAgent<{
+    const dispatchResult = await dispatchAgentHandoff<{
       runId: string;
       status?: unknown;
-    }>(agentParams, 10_000);
+    }>({
+      purpose: "main_session_restart_recovery",
+      sourceSessionKey: dispatchSessionKey,
+      sourceSessionId: params.entry.sessionId,
+      targetSessionKey: dispatchSessionKey,
+      targetSessionId: params.entry.sessionId,
+      requestId: recoveryRunId,
+      request: agentParams,
+      timeoutMs: 10_000,
+    });
     // Real Gateway admission consumes the reservation before returning accepted.
     // Recovery-runtime fakes may return directly, so keep this idempotent fallback
     // to make the durable acceptance boundary explicit in focused tests too.

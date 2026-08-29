@@ -372,7 +372,7 @@ describe("agent request Swarm preflight", () => {
       undefined,
       expect.objectContaining({
         code: "INVALID_REQUEST",
-        message: "inputProvenance is reserved for authenticated backend handoffs.",
+        message: "inputProvenance is host-derived and cannot be supplied in agent params.",
       }),
     );
   });
@@ -395,8 +395,71 @@ describe("agent request Swarm preflight", () => {
       undefined,
       expect.objectContaining({
         code: "INVALID_REQUEST",
-        message: "inputProvenance is reserved for authenticated backend handoffs.",
+        message: "inputProvenance is host-derived and cannot be supplied in agent params.",
       }),
+    );
+  });
+
+  it.each(["external_user", "internal_system"] as const)(
+    "rejects caller-supplied %s provenance from a synthetic client",
+    (kind) => {
+      const { respond, result } = runPreflight(undefined, true, {
+        backend: true,
+        includeCollectorFields: false,
+        inputProvenance: {
+          kind,
+          sourceTool: "caller-declared",
+        },
+      });
+
+      expect(result).toBeUndefined();
+      expect(respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "INVALID_REQUEST" }),
+      );
+    },
+  );
+
+  it("does not let a sessions_send capability grant broad internal controls", () => {
+    const targetSessionKey = "agent:worker:subagent:target";
+    const targetSessionId = "target-session-1";
+    const idempotencyKey = "purpose-isolation";
+    const capability = issueInternalAgentHandoffCapability({
+      sourceSessionKey: "agent:clawy:operator",
+      sourceSessionId: "source-session-1",
+      targetSessionKey,
+      targetSessionId,
+      requestId: idempotencyKey,
+    });
+    const respond = vi.fn();
+    const result = prepareAgentRequestPreflight({
+      params: {
+        message: "lookup",
+        sessionKey: targetSessionKey,
+        expectedExistingSessionId: targetSessionId,
+        idempotencyKey,
+        sessionEffects: "internal",
+        suppressPromptPersistence: true,
+      },
+      respond,
+      context: { getRuntimeConfig: () => ({}), dedupe: new Map() },
+      client: {
+        internal: {
+          agentHandoffCapability: capability,
+          agentHandoffSource: {
+            sourceSessionKey: "agent:clawy:operator",
+            sourceSessionId: "source-session-1",
+          },
+        },
+      },
+    } as never);
+
+    expect(result).toBeUndefined();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "INVALID_REQUEST" }),
     );
   });
 
@@ -440,6 +503,7 @@ describe("agent request Swarm preflight", () => {
     const idempotencyKey = "admitted-handoff";
     const capability = issueInternalAgentHandoffCapability({
       sourceSessionKey: "agent:clawy:operator",
+      sourceSessionId: "source-session-1",
       sourceChannel: "internal",
       targetSessionKey,
       targetSessionId,
@@ -455,7 +519,15 @@ describe("agent request Swarm preflight", () => {
       },
       respond,
       context: { getRuntimeConfig: () => ({}), dedupe: new Map() },
-      client: { internal: { agentHandoffCapability: capability } },
+      client: {
+        internal: {
+          agentHandoffCapability: capability,
+          agentHandoffSource: {
+            sourceSessionKey: "agent:clawy:operator",
+            sourceSessionId: "source-session-1",
+          },
+        },
+      },
     } as never);
 
     expect(respond).not.toHaveBeenCalled();
@@ -494,7 +566,7 @@ describe("agent request Swarm preflight", () => {
       undefined,
       expect.objectContaining({
         code: "INVALID_REQUEST",
-        message: "inputProvenance is reserved for authenticated backend handoffs.",
+        message: "inputProvenance is host-derived and cannot be supplied in agent params.",
       }),
     );
   });

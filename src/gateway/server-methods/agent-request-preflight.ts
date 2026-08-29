@@ -88,6 +88,7 @@ export function prepareAgentRequestPreflight(
   const cfg = params.context.getRuntimeConfig();
   const lifecycleGeneration = getAgentEventLifecycleGeneration();
   const handoffCapability = params.client?.internal?.agentHandoffCapability;
+  const handoffSource = params.client?.internal?.agentHandoffSource;
   const requestedSessionKey = request.sessionKey?.trim();
   // The dispatcher records the target incarnation before handing the request
   // to Gateway. Do not read the mutable session store here: the work-admission
@@ -98,6 +99,8 @@ export function prepareAgentRequestPreflight(
     ? targetSessionId && requestedSessionKey
       ? consumeInternalAgentHandoffCapability({
           capability: handoffCapability,
+          sourceSessionKey: handoffSource?.sourceSessionKey ?? "",
+          sourceSessionId: handoffSource?.sourceSessionId ?? "",
           targetSessionKey: requestedSessionKey,
           targetSessionId,
           requestId: request.idempotencyKey,
@@ -116,29 +119,26 @@ export function prepareAgentRequestPreflight(
     );
     return undefined;
   }
-  // An in-process capability is the only authority for sessions_send
-  // inter-session provenance. The caller-controlled AgentParams field is never
-  // used to mint or validate that authority.
-  const normalizedRequestedProvenance = normalizeInputProvenance(request.inputProvenance);
-  const isCallerDeclaredInterSessionHandoff =
-    normalizedRequestedProvenance?.kind === "inter_session";
-  const canUseInternalRuntimeControls = resolveCanUseInternalRuntimeControls(params.client);
-  if (
-    request.inputProvenance !== undefined &&
-    (isCallerDeclaredInterSessionHandoff || !canUseInternalRuntimeControls)
-  ) {
+  // Provenance is never request authority. Every trusted value is derived from
+  // a host-issued purpose capability, including synthetic and agent-runtime
+  // callers which retain separate legacy controls for non-provenance work.
+  if (request.inputProvenance !== undefined) {
     params.respond(
       false,
       undefined,
       errorShape(
         ErrorCodes.INVALID_REQUEST,
-        "inputProvenance is reserved for authenticated backend handoffs.",
+        "inputProvenance is host-derived and cannot be supplied in agent params.",
       ),
     );
     return undefined;
   }
+  const hasLegacyInternalRuntimeControls = resolveCanUseInternalRuntimeControls(params.client);
+  // A sessions_send dispatcher deliberately uses a synthetic client for the
+  // in-process route. Possessing that one-call capability must still suppress
+  // every broad synthetic/runtime privilege.
   const canUseInternalRuntimeHandoff =
-    canUseInternalRuntimeControls || admittedInternalHandoff !== undefined;
+    hasLegacyInternalRuntimeControls && admittedInternalHandoff?.purpose !== "sessions_send";
   const requestSessionKey = request.sessionKey?.trim();
   const collectorSession = findSwarmCollectorSession(requestSessionKey);
   // Collector children always use subagent session keys, so ordinary traffic
@@ -231,11 +231,26 @@ export function prepareAgentRequestPreflight(
   }
   const allowModelOverride = resolveAllowModelOverrideFromClient(params.client);
   const canUseCronRunContinuation = resolveCanUseCronRunContinuation(params.client);
-  const expectedSessionResult = resolveExpectedExistingSessionConstraint({
-    canUseInternalRuntimeHandoff,
-    expectedExistingSessionId: request.expectedExistingSessionId,
-    internalRuntimeHandoffId: request.internalRuntimeHandoffId,
-  });
+  const expectedSessionResult = admittedInternalHandoff
+    ? request.internalRuntimeHandoffId && !canUseInternalRuntimeHandoff
+      ? ({
+          ok: false,
+          error: "internalRuntimeHandoffId is not authorized by this handoff purpose.",
+        } as const)
+      : ({
+          ok: true,
+          constraint: {
+            sessionId: admittedInternalHandoff.targetSessionId,
+            ...(canUseInternalRuntimeHandoff && request.internalRuntimeHandoffId?.trim()
+              ? { handoffId: request.internalRuntimeHandoffId.trim() }
+              : {}),
+          },
+        } as const)
+    : resolveExpectedExistingSessionConstraint({
+        canUseInternalRuntimeHandoff,
+        expectedExistingSessionId: request.expectedExistingSessionId,
+        internalRuntimeHandoffId: request.internalRuntimeHandoffId,
+      });
   if (!expectedSessionResult.ok) {
     params.respond(
       false,
@@ -260,7 +275,10 @@ export function prepareAgentRequestPreflight(
     );
     return undefined;
   }
-  if (requestedModelOverride && !allowModelOverride) {
+  if (
+    requestedModelOverride &&
+    (!allowModelOverride || admittedInternalHandoff?.purpose === "sessions_send")
+  ) {
     params.respond(
       false,
       undefined,
@@ -298,7 +316,7 @@ export function prepareAgentRequestPreflight(
     );
     return undefined;
   }
-  const inputProvenance = normalizeInputProvenance(request.inputProvenance);
+  const inputProvenance = admittedInternalHandoff?.provenance;
   const sessionEffects =
     isOneShotModelRun || requestedInternalSessionEffects ? "internal" : request.sessionEffects;
   const agentDedupeKeys = resolveAgentDedupeKeys({
@@ -356,8 +374,7 @@ export function prepareAgentRequestPreflight(
       groupChannel: request.groupChannel,
       groupSpace: request.groupSpace,
     }),
-    inputProvenance:
-      admittedInternalHandoff?.provenance ?? normalizeInputProvenance(request.inputProvenance),
+    inputProvenance,
     admittedInternalHandoff,
     isRestartRecoveryResumeRun:
       canUseInternalRuntimeHandoff && isMainSessionRestartRecoveryInputProvenance(inputProvenance),

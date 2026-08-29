@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as config from "../config/config.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
+import type { InternalAgentHandoffDispatchParams } from "../gateway/internal-agent-handoff.js";
 import type { GatewayRecoveryRuntime } from "../gateway/server-instance-runtime.types.js";
 import {
   getActiveGatewayRootWorkCount,
@@ -29,6 +30,8 @@ const dispatchAgent = vi.fn(async (_payload: Record<string, unknown>, _timeoutMs
 const readSessionMessages = vi.fn(async () => [] as unknown[]);
 const gatewayRuntime: GatewayRecoveryRuntime = {
   dispatchAgent: dispatchAgent as GatewayRecoveryRuntime["dispatchAgent"],
+  dispatchAgentHandoff: async <T = unknown>(params: InternalAgentHandoffDispatchParams) =>
+    (await dispatchAgent(params.request, params.timeoutMs)) as T,
   waitForAgent: vi.fn(),
   sendRecoveryNotice: vi.fn(),
 };
@@ -71,12 +74,17 @@ const sessionMocks = vi.hoisted(() => {
     loadSessionStore,
     resolveAgentIdFromSessionKey: vi.fn(() => "main"),
     resolveStorePath: vi.fn(() => "/tmp/test-sessions.json"),
-    loadSessionEntry: vi.fn(
-      (scope: { storePath?: string; sessionKey: string }) =>
-        loadSessionStore(scope.storePath, {
-          clone: false,
-        })[scope.sessionKey],
-    ),
+    loadSessionEntry: vi.fn((scope: { storePath?: string; sessionKey: string }) => {
+      const entry = loadSessionStore(scope.storePath, {
+        clone: false,
+      })[scope.sessionKey];
+      return (
+        entry ??
+        (scope.sessionKey === "agent:main:quietchat:direct:+1234567890"
+          ? { sessionId: "requester-session-1", updatedAt: Date.now() }
+          : undefined)
+      );
+    }),
     patchSessionEntry: vi.fn(
       async (
         scope: { storePath?: string; sessionKey: string },
@@ -172,6 +180,10 @@ function mockSingleAbortedSession(
       updatedAt: Date.now(),
       abortedLastRun: true,
       ...overrides,
+    },
+    "agent:main:quietchat:direct:+1234567890": {
+      sessionId: "requester-session-1",
+      updatedAt: Date.now(),
     },
   };
   sessionMocks.loadSessionStore.mockReturnValue(store);
@@ -951,9 +963,15 @@ describe("subagent-orphan-recovery", () => {
 
   it("uses the replacement Gateway runtime when the instance changes before recovery", async () => {
     mockSingleAbortedSession();
-    const replacementDispatch = vi.fn(async () => ({ runId: "replacement-run" }));
+    const replacementDispatch = vi.fn(
+      async (_request: Record<string, unknown>, _timeoutMs?: number) => ({
+        runId: "replacement-run",
+      }),
+    );
     const replacementRuntime: GatewayRecoveryRuntime = {
       dispatchAgent: replacementDispatch as GatewayRecoveryRuntime["dispatchAgent"],
+      dispatchAgentHandoff: async <T = unknown>(params: InternalAgentHandoffDispatchParams) =>
+        (await replacementDispatch(params.request, params.timeoutMs)) as T,
       waitForAgent: vi.fn(),
       sendRecoveryNotice: vi.fn(),
     };

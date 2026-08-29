@@ -9,7 +9,10 @@ import { isKnownCoreToolId } from "../agents/tool-catalog.js";
 import { normalizeToolName } from "../agents/tool-policy.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
 import type { RuntimePluginToolGrant } from "../plugins/runtime/tool-grant.js";
-import type { InternalAgentHandoffCapability } from "./internal-agent-handoff.js";
+import type {
+  InternalAgentHandoffCapability,
+  InternalAgentHandoffSourceBinding,
+} from "./internal-agent-handoff.js";
 import { APPROVALS_SCOPE, WRITE_SCOPE } from "./method-scopes.js";
 import type { TrustedSessionCreation } from "./server-methods/session-creation-provenance.js";
 import type { GatewayRequestOptions } from "./server-methods/types.js";
@@ -24,6 +27,7 @@ export function createSyntheticPluginRuntimeClient(params?: {
   runtimePluginToolGrant?: RuntimePluginToolGrant;
   delegatedToolPolicyHandoff?: boolean;
   agentHandoffCapability?: InternalAgentHandoffCapability;
+  agentHandoffSource?: InternalAgentHandoffSourceBinding;
   sessionCreation?: TrustedSessionCreation;
   scopes?: string[];
 }): NonNullable<GatewayRequestOptions["client"]> {
@@ -67,6 +71,7 @@ export function createSyntheticPluginRuntimeClient(params?: {
       ...(params?.agentHandoffCapability
         ? { agentHandoffCapability: params.agentHandoffCapability }
         : {}),
+      ...(params?.agentHandoffSource ? { agentHandoffSource: params.agentHandoffSource } : {}),
     },
   };
 }

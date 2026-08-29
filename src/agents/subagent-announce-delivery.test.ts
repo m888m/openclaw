@@ -441,6 +441,7 @@ async function deliverSlackChannelAnnouncement(params: {
   sendMessage?: typeof runtimeSendMessage;
   internalEvents?: AgentInternalEvent[];
   sourceSessionKey?: string;
+  sourceSessionId?: string;
   sourceChannel?: string;
   sourceTool?: string;
   runtimeConfig?: Record<string, unknown>;
@@ -506,6 +507,7 @@ async function deliverSlackChannelAnnouncement(params: {
     directIdempotencyKey: params.directIdempotencyKey,
     internalEvents: params.internalEvents,
     sourceSessionKey: params.sourceSessionKey,
+    sourceSessionId: params.sourceSessionId,
     sourceChannel: params.sourceChannel,
     sourceTool: params.sourceTool,
     durableGeneratedMediaHandoff: params.durableGeneratedMediaHandoff,
@@ -1691,6 +1693,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       directIdempotencyKey: "announce-cron-media-no-target",
       sourceTool: "image_generate",
       sourceSessionKey: "image_generate:task-123",
+      sourceSessionId: "task-123",
       sourceChannel: "internal",
       internalEvents: imageCompletionEvents({
         taskLabel: "cron proof image",
@@ -3538,6 +3541,8 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       isActive: true,
       directIdempotencyKey: "announce-channel-media-handoff-locked",
       sourceTool: "image_generate",
+      sourceSessionKey: "image_generate:task-locked",
+      sourceSessionId: "task-locked",
       durableGeneratedMediaHandoff: true,
       runtimeConfig: { messages: { groupChat: { visibleReplies: "message_tool" } } },
       internalEvents: imageCompletionEvents({
@@ -3566,11 +3571,10 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
           accountId: "acct-1",
           chatType: "channel",
         },
-        inputProvenance: {
-          kind: "inter_session",
-          sourceChannel: "webchat",
-          sourceTool: "image_generate",
-        },
+        sourceSessionKey: "image_generate:task-locked",
+        sourceSessionId: "task-locked",
+        sourceChannel: "webchat",
+        sourceTool: "image_generate",
         sourceReplyDeliveryMode: "message_tool_only",
         expectedMediaUrls: ["/tmp/generated-locked.png"],
         idempotencyKey: "announce-channel-media-handoff-locked:agent-loop",
@@ -3649,6 +3653,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       sourceTool: "image_generate",
       internalEvents: imageCompletionEvents(),
       sourceSessionKey: "image_generate:task-123",
+      sourceSessionId: "task-123",
       sourceChannel: "internal",
     });
 
@@ -3663,12 +3668,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       to: "channel:C123",
       idempotencyKey: "announce-stale-cron-media",
     });
-    expectRecordFields(params.inputProvenance, {
-      kind: "inter_session",
-      sourceSessionKey: "image_generate:task-123",
-      sourceChannel: "internal",
-      sourceTool: "image_generate",
-    });
+    expect(params).not.toHaveProperty("inputProvenance");
     expect(mockCallArg(dispatchGatewayMethodInProcess, 0, 2)).toMatchObject({
       allowSyntheticCronRunContinuation: true,
       forceSyntheticClient: true,

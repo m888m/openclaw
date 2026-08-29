@@ -15,6 +15,7 @@ import {
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
 import { callGateway } from "../gateway/call.js";
+import type { InternalAgentHandoffDispatchParams } from "../gateway/internal-agent-handoff.js";
 import type { GatewayRecoveryRuntime } from "../gateway/server-instance-runtime.types.js";
 import {
   getAgentEventLifecycleGeneration,
@@ -90,6 +91,15 @@ vi.mock("../gateway/call.js", () => ({
 const mockRecoveryRuntime = {
   dispatchAgent: async <T>(params: Record<string, unknown>, timeoutMs?: number) =>
     (await callGateway({ method: "agent", params, timeoutMs })) as T,
+  dispatchAgentHandoff: async <T>(params: {
+    request: Record<string, unknown>;
+    timeoutMs?: number;
+  }) =>
+    (await callGateway({
+      method: "agent",
+      params: params.request,
+      timeoutMs: params.timeoutMs,
+    })) as T,
   waitForAgent: async <T>(params: Record<string, unknown>, timeoutMs?: number) =>
     (await callGateway({ method: "agent.wait", params, timeoutMs })) as T,
   sendRecoveryNotice: async <T>(params: Record<string, unknown>, timeoutMs?: number) =>
@@ -2673,7 +2683,10 @@ describe("main-session-restart-recovery", () => {
     await writeTranscript(sessionsDir, "main-session", [
       { role: "user", content: "recover without a socket" },
     ]);
-    const dispatchAgent = vi.fn(async () => ({ runId: "recovery-main", status: "accepted" }));
+    const dispatchAgent = vi.fn(async (_request: Record<string, unknown>, _timeoutMs?: number) => ({
+      runId: "recovery-main",
+      status: "accepted",
+    }));
 
     const result = await retryRestartAbortedMainSessionRecovery({
       cfg: {},
@@ -2684,6 +2697,8 @@ describe("main-session-restart-recovery", () => {
       storePath,
       gatewayRuntime: {
         dispatchAgent: dispatchAgent as GatewayRecoveryRuntime["dispatchAgent"],
+        dispatchAgentHandoff: async <T = unknown>(params: InternalAgentHandoffDispatchParams) =>
+          (await dispatchAgent(params.request, params.timeoutMs)) as T,
         waitForAgent: vi.fn(),
         sendRecoveryNotice: vi.fn(),
       },

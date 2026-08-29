@@ -14,6 +14,7 @@ import { buildAnnounceIdempotencyKey } from "./announce-idempotency.js";
 import {
   deliverSubagentAnnouncement,
   loadRequesterSessionEntry,
+  loadSessionEntryByKey,
 } from "./subagent-announce-delivery.js";
 import { resolveAnnounceOrigin } from "./subagent-announce-origin.js";
 import {
@@ -369,6 +370,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
         requesterOrigin: requesterSessionOrigin,
         directOrigin,
         sourceSessionKey: currentSettledEntry.childSessionKey,
+        sourceSessionId: loadSessionEntryByKey(currentSettledEntry.childSessionKey)?.sessionId,
         sourceChannel: INTERNAL_MESSAGE_CHANNEL,
         sourceTool: "subagent_announce",
         targetRequesterSessionKey: requesterSessionKey,

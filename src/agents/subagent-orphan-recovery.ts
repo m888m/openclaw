@@ -155,6 +155,7 @@ function extractMessageText(msg: unknown): string | undefined {
 async function resumeOrphanedSession(params: {
   gatewayRuntime: GatewayRecoveryRuntime;
   sessionKey: string;
+  targetSessionId: string;
   task: string;
   lastHumanMessage?: string;
   configChangeHint?: string;
@@ -174,8 +175,29 @@ async function resumeOrphanedSession(params: {
     ) {
       return { resumed: false, error: "failed to reserve collector recovery launch" };
     }
-    const result = await params.gatewayRuntime.dispatchAgent<{ runId: string }>(
-      {
+    const dispatchAgentHandoff = params.gatewayRuntime.dispatchAgentHandoff;
+    if (!dispatchAgentHandoff) {
+      return { resumed: false, error: "purpose-bound recovery dispatcher is unavailable" };
+    }
+    const sourceSessionKey = params.originalRun.requesterSessionKey.trim();
+    const sourceSessionId = loadSessionEntry({
+      storePath: resolveStorePath(getRuntimeConfig().session?.store, {
+        agentId: resolveAgentIdFromSessionKey(sourceSessionKey),
+      }),
+      sessionKey: sourceSessionKey,
+    })?.sessionId?.trim();
+    if (!sourceSessionId) {
+      return { resumed: false, error: "requester source session incarnation is unavailable" };
+    }
+    const result = await dispatchAgentHandoff<{ runId: string }>({
+      purpose: "subagent_interrupted_resume",
+      sourceSessionKey,
+      sourceSessionId,
+      sourceChannel: "internal",
+      targetSessionKey: params.sessionKey,
+      targetSessionId: params.targetSessionId,
+      requestId: idempotencyKey,
+      request: {
         message: resumeMessage,
         sessionKey: params.sessionKey,
         idempotencyKey,
@@ -187,17 +209,11 @@ async function resumeOrphanedSession(params: {
               swarmOutputSchema: params.originalRun.outputSchema,
             }
           : {}),
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: params.originalRun.requesterSessionKey,
-          sourceChannel: "internal",
-          sourceTool: "subagent_interrupted_resume",
-        },
         sessionEffects: "internal",
         suppressPromptPersistence: true,
       },
-      10_000,
-    );
+      timeoutMs: 10_000,
+    });
     const remapped = replaceSubagentRunAfterSteer({
       previousRunId: params.originalRunId,
       nextRunId: result.runId,
@@ -479,6 +495,7 @@ export async function recoverOrphanedSubagentSessions(params: {
         const resumeResult = await resumeOrphanedSession({
           gatewayRuntime: params.gatewayRuntime,
           sessionKey: childSessionKey,
+          targetSessionId: entry.sessionId,
           task: runRecord.task,
           lastHumanMessage: extractMessageText(lastHumanMessage),
           configChangeHint: configChangeDetected

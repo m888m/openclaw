@@ -2,10 +2,16 @@ import type { CallGatewayOptions } from "../../gateway/call.js";
 import "./sessions-send-tool.a2a.js";
 
 type GatewayCaller = <T = unknown>(opts: CallGatewayOptions) => Promise<T>;
+type SessionEntryLoader = typeof import("../subagent-announce-delivery.js").loadSessionEntryByKey;
 
 type SessionsSendA2ATestApi = {
   testing: {
-    setDepsForTest(overrides?: Partial<{ callGateway: GatewayCaller }>): void;
+    setDepsForTest(
+      overrides?: Partial<{
+        callGateway: GatewayCaller;
+        loadSessionEntryByKey: SessionEntryLoader;
+      }>,
+    ): void;
   };
 };
 

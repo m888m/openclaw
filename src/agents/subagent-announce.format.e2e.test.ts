@@ -84,22 +84,6 @@ function visibleAgentResponse(runId = "run-main") {
   };
 }
 
-function expectInputProvenance(
-  params: Record<string, unknown> | undefined,
-  sourceSessionKey: string,
-) {
-  // Announce handoffs are inter-session messages; provenance lets the receiver
-  // distinguish child-output delivery from ordinary user input.
-  const inputProvenance = params?.inputProvenance;
-  if (!inputProvenance || typeof inputProvenance !== "object") {
-    throw new Error("Expected input provenance");
-  }
-  const provenance = inputProvenance as Record<string, unknown>;
-  expect(provenance.kind).toBe("inter_session");
-  expect(provenance.sourceSessionKey).toBe(sourceSessionKey);
-  expect(provenance.sourceTool).toBe("subagent_announce");
-}
-
 function getAgentCall(index = 0): AgentCallRequest {
   const call = agentSpy.mock.calls[index]?.[0];
   if (!call) {
@@ -789,7 +773,7 @@ describe("subagent announce formatting", () => {
     expect(call?.params?.channel).toBe("discord");
     expect(call?.params?.to).toBe("channel:12345");
     expect(call?.params?.sessionKey).toBe("agent:main:main");
-    expectInputProvenance(call?.params, "agent:main:subagent:test");
+    expect(call?.params).not.toHaveProperty("inputProvenance");
     expect(msg).toContain("final answer: 2");
     expect(msg).not.toContain("✅ Subagent");
   });
@@ -2278,7 +2262,7 @@ describe("subagent announce formatting", () => {
     expect(call?.params?.channel).toBeUndefined();
     expect(call?.params?.to).toBeUndefined();
     expect((call?.params as { role?: unknown } | undefined)?.role).toBeUndefined();
-    expectInputProvenance(call?.params, "agent:main:subagent:worker");
+    expect(call?.params).not.toHaveProperty("inputProvenance");
   });
 
   it("keeps completion-mode announce internal for nested requester subagent sessions", async () => {
@@ -2302,7 +2286,7 @@ describe("subagent announce formatting", () => {
     expect(call?.params?.deliver).toBe(false);
     expect(call?.params?.channel).toBeUndefined();
     expect(call?.params?.to).toBeUndefined();
-    expectInputProvenance(call?.params, "agent:main:subagent:orchestrator:subagent:worker");
+    expect(call?.params).not.toHaveProperty("inputProvenance");
     const message = typeof call?.params?.message === "string" ? call.params.message : "";
     expect(message).toContain(
       "Convert this completion into a concise internal orchestration update for your parent agent",
