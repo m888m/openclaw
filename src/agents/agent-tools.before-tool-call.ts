@@ -65,6 +65,7 @@ import {
   type PluginHookToolKind,
   type PluginHookToolRequesterContext,
 } from "../plugins/types.js";
+import type { InputProvenance } from "../sessions/input-provenance.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import {
   resolveSkillTelemetrySource,
@@ -151,6 +152,8 @@ export type HookContext = {
   sessionKey?: string;
   /** Ephemeral session UUID — regenerated on /new and /reset. */
   sessionId?: string;
+  /** Host-normalized provenance for the current agent input. */
+  inputProvenance?: InputProvenance;
   runId?: string;
   /** Device-scoped operator session allowed to review approvals initiated by this run. */
   approvalReviewerDeviceId?: string;
@@ -1586,6 +1589,7 @@ export async function runBeforeToolCallHook(args: {
       ...(args.ctx?.sessionKey && { sessionKey: args.ctx.sessionKey }),
       ...(args.ctx?.sessionId && { sessionId: args.ctx.sessionId }),
       ...(args.ctx?.runId && { runId: args.ctx.runId }),
+      ...(args.ctx?.inputProvenance ? { inputProvenance: args.ctx.inputProvenance } : {}),
       ...(args.ctx?.trace && { trace: freezeDiagnosticTraceContext(args.ctx.trace) }),
       ...(args.toolCallId && { toolCallId: args.toolCallId }),
       ...(args.ctx?.channelId && { channelId: args.ctx.channelId }),

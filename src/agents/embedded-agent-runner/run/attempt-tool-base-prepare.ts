@@ -311,6 +311,7 @@ export function prepareEmbeddedAttemptToolBase(params: {
           skillsSnapshot: params.skillsSnapshot,
           skillUsagePaths: params.skillUsagePaths,
           conversationCapabilityProfile: runtimeCapabilityProfile,
+          inputProvenance: attempt.inputProvenance,
           scheduledToolPolicy: attempt.scheduledToolPolicy,
           onYield: params.onYield,
         });

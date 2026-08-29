@@ -23,6 +23,7 @@ import "./test-helpers/fast-bash-tools.js";
 import "./test-helpers/fast-coding-tools.js";
 import "./test-helpers/fast-openclaw-tools.js";
 import { isPluginToolAllowed } from "../plugins/tool-grant-allowlist.js";
+import { normalizeInputProvenance } from "../sessions/input-provenance.js";
 import { wrapToolWithBeforeToolCallHook } from "./agent-tools.before-tool-call.js";
 import { createOpenClawCodingTools } from "./agent-tools.js";
 import { runWithAgentRingZeroTools } from "./agent-tools.ring-zero-context.js";
@@ -267,6 +268,53 @@ describe("createOpenClawCodingTools", () => {
         },
       }),
     );
+  });
+
+  it("passes host-derived input provenance through the real tool preparation hook context", async () => {
+    const beforeToolCall = vi.fn();
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([{ hookName: "before_tool_call", handler: beforeToolCall }]),
+    );
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hook-provenance-"));
+    await fs.writeFile(path.join(tmpDir, "note.txt"), "hello");
+    const inputProvenance = normalizeInputProvenance({
+      kind: "inter_session",
+      sourceSessionKey: "agent:clawy:operator",
+      sourceChannel: "internal",
+      sourceTool: "sessions_send",
+    });
+    if (!inputProvenance) {
+      throw new Error("expected normalized input provenance");
+    }
+
+    const tools = createOpenClawCodingTools({
+      agentId: "postman",
+      sessionKey: "agent:postman:tony-email-lookup",
+      modelProvider: "local",
+      modelId: "dgx-active",
+      inputProvenance,
+      workspaceDir: tmpDir,
+    });
+    const readTool = requireTool(tools, "read");
+    await requireToolExecute(readTool)("tool-hook-provenance", {
+      path: "note.txt",
+      inputProvenance: { kind: "external_user" },
+    });
+
+    expect(beforeToolCall).toHaveBeenCalledTimes(1);
+    expect(beforeToolCall.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        agentId: "postman",
+        sessionKey: "agent:postman:tony-email-lookup",
+        inputProvenance,
+      }),
+    );
+    const observedProvenance = beforeToolCall.mock.calls[0]?.[1]?.inputProvenance;
+    expect(observedProvenance).toEqual(inputProvenance);
+    expect(Object.isFrozen(observedProvenance)).toBe(true);
+    expect(beforeToolCall.mock.calls[0]?.[0]?.params).toMatchObject({
+      inputProvenance: { kind: "external_user" },
+    });
   });
 
   it("re-wraps existing before_tool_call hooks once with the current context", async () => {

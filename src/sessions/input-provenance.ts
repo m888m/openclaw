@@ -10,11 +10,11 @@ const INPUT_PROVENANCE_KIND_VALUES = ["external_user", "inter_session", "interna
 type InputProvenanceKind = (typeof INPUT_PROVENANCE_KIND_VALUES)[number];
 
 export type InputProvenance = {
-  kind: InputProvenanceKind;
-  originSessionId?: string;
-  sourceSessionKey?: string;
-  sourceChannel?: string;
-  sourceTool?: string;
+  readonly kind: InputProvenanceKind;
+  readonly originSessionId?: string;
+  readonly sourceSessionKey?: string;
+  readonly sourceChannel?: string;
+  readonly sourceTool?: string;
 };
 
 export const MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL = "main_session_restart_recovery" as const;
@@ -41,13 +41,13 @@ export function normalizeInputProvenance(value: unknown): InputProvenance | unde
   if (!isInputProvenanceKind(record.kind)) {
     return undefined;
   }
-  return {
+  return Object.freeze({
     kind: record.kind,
     originSessionId: normalizeOptionalString(record.originSessionId),
     sourceSessionKey: normalizeOptionalString(record.sourceSessionKey),
     sourceChannel: normalizeOptionalString(record.sourceChannel),
     sourceTool: normalizeOptionalString(record.sourceTool),
-  };
+  });
 }
 
 // Only attach provenance to user messages that do not already carry it. Existing

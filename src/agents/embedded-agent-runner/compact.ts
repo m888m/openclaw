@@ -997,6 +997,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
           skillsSnapshot: skillsSnapshotForRun,
           skillUsagePaths,
           conversationCapabilityProfile: runtimeCapabilityProfile,
+          inputProvenance: params.inputProvenance,
           modelAuthMode: resolveModelAuthMode(effectiveModel.provider, params.config, undefined, {
             workspaceDir: effectiveWorkspace,
           }),

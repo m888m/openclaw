@@ -24,7 +24,7 @@ import type {
 import { appendRuntimePluginToolGrant } from "../plugins/tool-grant-allowlist.js";
 import { getPluginToolMeta } from "../plugins/tools.js";
 import { GATEWAY_OWNER_ONLY_CORE_TOOLS } from "../security/dangerous-tools.js";
-import type { InputProvenance } from "../sessions/input-provenance.js";
+import { normalizeInputProvenance, type InputProvenance } from "../sessions/input-provenance.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
 import type { SkillSnapshot, SkillUsagePath } from "../skills/types.js";
 import type { SkillWorkshopRunOptions } from "../skills/workshop/types.js";
@@ -483,6 +483,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
   // sessionKey/config can lose the real sandbox agent when callers pass a
   // legacy alias like `main` instead of an agent session key.
   const sandboxToolPolicy = sandbox?.tools;
+  const inputProvenance = normalizeInputProvenance(options?.inputProvenance);
   const capabilityProfile =
     options?.conversationCapabilityProfile ??
     resolveConversationCapabilityProfile({
@@ -525,7 +526,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
       sandboxToolPolicy,
       runtimeToolAllowlist: options?.runtimeToolAllowlist,
       inheritRuntimeToolAllowlist: options?.inheritRuntimeToolAllowlist,
-      inputProvenance: options?.inputProvenance,
+      inputProvenance,
       trustedInternalHandoff: options?.trustedInternalHandoff,
       scheduledToolPolicy: options?.scheduledToolPolicy,
     });
@@ -1144,6 +1145,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
     sessionKey: options?.sessionKey,
     sessionId: options?.sessionId,
     runId: options?.runId,
+    ...(inputProvenance ? { inputProvenance } : {}),
     approvalReviewerDeviceId: options?.approvalReviewerDeviceId,
     channelId: options?.hookChannelId ?? options?.currentChannelId,
     ...(hasRequester ? { requester } : {}),
