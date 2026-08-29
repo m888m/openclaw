@@ -8,6 +8,8 @@ import {
   getSubagentRunByChildSessionKey,
   resetSubagentRegistryForTests,
 } from "../../agents/subagent-registry.test-helpers.js";
+import { resolveStorePath } from "../../config/sessions.js";
+import { replaceSessionEntry } from "../../config/sessions/session-accessor.js";
 import { getDetachedTaskLifecycleRuntime } from "../../tasks/detached-task-runtime.js";
 import {
   findTaskByRunId,
@@ -204,6 +206,13 @@ describe("gateway agent handler", () => {
       };
       mocks.listAgentIds.mockReturnValue(["main", "work"]);
       mocks.loadConfigReturn = cfg;
+      await replaceSessionEntry(
+        {
+          storePath: resolveStorePath(undefined, { agentId: "work" }),
+          sessionKey: "agent:work:main",
+        },
+        { sessionId: "plugin-owner-session", updatedAt: Date.now() },
+      );
       mocks.loadSessionEntry.mockReturnValue({
         cfg,
         storePath: "/tmp/sessions.json",
@@ -2152,6 +2161,13 @@ describe("gateway agent handler", () => {
         resetSubagentRegistryForTests({ persist: false });
         const childSessionKey = "agent:main:acp:plugin-child";
         const runId = "acp-plugin-subagent-run";
+        await replaceSessionEntry(
+          {
+            storePath: resolveStorePath(undefined, { agentId: "main" }),
+            sessionKey: "agent:main:main",
+          },
+          { sessionId: "plugin-owner-session", updatedAt: Date.now() },
+        );
         mockAcpChildSessionEntry(childSessionKey);
         mocks.readAcpSessionMeta.mockReturnValue(confirmedAcpMeta);
         const createRunningTaskRunSpy = spyDetachedCreateRunningTaskRun();

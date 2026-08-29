@@ -256,6 +256,34 @@ describe("subagent registry persistence", () => {
     );
   });
 
+  it("round-trips requester incarnation while legacy rows remain non-authoritative", async () => {
+    const exact: SubagentRunRecord = {
+      runId: "run-requester-incarnation",
+      childSessionKey: "agent:main:subagent:requester-incarnation",
+      requesterSessionKey: "agent:main:main",
+      requesterSessionId: "requester-session-A",
+      requesterDisplayKey: "main",
+      task: "persist requester incarnation",
+      cleanup: "keep",
+      createdAt: 1,
+    };
+    const legacy: SubagentRunRecord = {
+      ...exact,
+      runId: "run-requester-incarnation-legacy",
+      childSessionKey: "agent:main:subagent:requester-incarnation-legacy",
+      requesterSessionId: undefined,
+    };
+
+    await writePersistedRegistry(
+      { runs: { [exact.runId]: exact, [legacy.runId]: legacy } },
+      { seedChildSessions: false },
+    );
+
+    const restored = loadSubagentRegistryFromSqlite();
+    expect(restored.get(exact.runId)?.requesterSessionId).toBe("requester-session-A");
+    expect(restored.get(legacy.runId)?.requesterSessionId).toBeUndefined();
+  });
+
   it("persists completed subagent timing into the child session entry", async () => {
     tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
     setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
@@ -1086,3 +1114,4 @@ describe("subagent registry persistence", () => {
     expect(persisted.has(runId)).toBe(false);
   });
 });
+/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

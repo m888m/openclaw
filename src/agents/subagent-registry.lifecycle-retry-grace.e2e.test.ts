@@ -36,6 +36,7 @@ type SessionStoreEntry = {
 };
 
 type GatewayAgentInternalEvent = {
+  childSessionKey?: string;
   status?: string;
   statusLabel?: string;
   result?: string;
@@ -186,6 +187,10 @@ describe("subagent registry lifecycle error grace", () => {
     subagentAnnounceDeliveryTesting.setDepsForTest({
       callGateway: callGatewayMock as typeof import("../gateway/call.js").callGateway,
       getRuntimeConfig: loadConfigMock as typeof import("../config/config.js").getRuntimeConfig,
+      loadSessionEntry: ((scope: { sessionKey: string }) =>
+        sessionStore[
+          scope.sessionKey
+        ]) as typeof import("../config/sessions/session-accessor.js").loadSessionEntry,
       getRequesterSessionActivity: (requesterSessionKey: string) => {
         const entry = sessionStore[requesterSessionKey];
         return {
@@ -321,12 +326,12 @@ describe("subagent registry lifecycle error grace", () => {
   function getAgentResultsForChildSession(childSessionKey: string): string[] {
     return getAgentCalls()
       .filter((request) => {
-        const inputProvenance = request.params?.inputProvenance;
-        if (!inputProvenance || typeof inputProvenance !== "object") {
-          return false;
-        }
-        return (
-          (inputProvenance as { sourceSessionKey?: unknown }).sourceSessionKey === childSessionKey
+        // Public request provenance is intentionally stripped by the
+        // capability dispatcher. The host-generated completion event retains
+        // the exact child identity needed to select this fixture's result.
+        expect(request.params?.inputProvenance).toBeUndefined();
+        return request.params?.internalEvents?.some(
+          (event) => event.childSessionKey === childSessionKey,
         );
       })
       .map((request) => {

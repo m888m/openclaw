@@ -10,7 +10,9 @@ import {
   resolveRequesterForChildSessionFromRuns,
   shouldIgnorePostCompletionAnnounceForSessionFromRuns,
 } from "./subagent-registry-queries.js";
+import type { RegisterSubagentRunParams } from "./subagent-registry-run-manager.js";
 import { getSubagentRunsSnapshotForRead } from "./subagent-registry-state.js";
+import { registerSubagentRun as registerProductionSubagentRun } from "./subagent-registry.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 export {
   getSubagentSessionRuntimeMs,
@@ -68,6 +70,19 @@ export function resetSubagentRegistryForTests(opts?: { persist?: boolean }) {
 
 export function addSubagentRunForTests(entry: SubagentRunRecord) {
   getRegistryTestApi().addSubagentRunForTests(entry);
+}
+
+/** Keeps legacy unit fixtures concise while production registration stays exact-incarnation-only. */
+export function registerSubagentRun(
+  params: Omit<RegisterSubagentRunParams, "requesterSessionId"> & {
+    requesterSessionId?: string;
+  },
+) {
+  registerProductionSubagentRun({
+    ...params,
+    requesterSessionId:
+      params.requesterSessionId?.trim() || `session:${params.requesterSessionKey.trim()}`,
+  });
 }
 
 export function releaseSubagentRun(runId: string) {

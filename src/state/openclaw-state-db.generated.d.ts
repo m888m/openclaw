@@ -1170,6 +1170,7 @@ export interface SubagentRuns {
   pending_final_delivery_payload_json: string | null;
   requester_display_key: string;
   requester_origin_json: string | null;
+  requester_session_id: string | null;
   requester_session_key: string;
   requester_settle_wake_attempt_count: number | null;
   requester_settle_wake_batch_run_ids_json: string | null;

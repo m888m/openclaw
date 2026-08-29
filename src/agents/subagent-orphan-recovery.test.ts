@@ -158,6 +158,7 @@ function createTestRunRecord(overrides: Partial<SubagentRunRecord> = {}): Subage
     runId: "run-1",
     childSessionKey: "agent:main:subagent:test-session-1",
     requesterSessionKey: "agent:main:quietchat:direct:+1234567890",
+    requesterSessionId: "requester-session-1",
     requesterDisplayKey: "main",
     task: "Test task: implement feature X",
     cleanup: "delete",
@@ -313,6 +314,59 @@ describe("subagent-orphan-recovery", () => {
         storePath: "/tmp/test-sessions.json",
       }),
     );
+  });
+
+  it("fails closed for a legacy run without an authoritative requester incarnation", async () => {
+    mockSingleAbortedSession();
+    const result = await recoverOrphanedSubagentSessions({
+      getActiveRuns: () => createActiveRuns(createTestRunRecord({ requesterSessionId: undefined })),
+    });
+
+    expect(result).toMatchObject({ recovered: 0, failed: 1 });
+    expect(result.failedRuns[0]?.error).toContain("no authoritative requester session");
+    expect(dispatchAgent).not.toHaveBeenCalled();
+    expect(subagentRegistrySteerRuntime.reserveSwarmCollectorLaunch).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "does not rebind an orphaned requester K:A to K:B (collector=%s)",
+    async (collect) => {
+      const store = mockSingleAbortedSession();
+      store["agent:main:quietchat:direct:+1234567890"].sessionId = "requester-session-B";
+      const result = await recoverOrphanedSubagentSessions({
+        getActiveRuns: () =>
+          createActiveRuns(
+            createTestRunRecord({
+              requesterSessionId: "requester-session-A",
+              collect,
+              ...(collect ? { outputSchema: { type: "object" } } : {}),
+            }),
+          ),
+      });
+
+      expect(result).toMatchObject({ recovered: 0, failed: 1 });
+      expect(result.failedRuns[0]?.error).toContain("changed since subagent registration");
+      expect(dispatchAgent).not.toHaveBeenCalled();
+      expect(subagentRegistrySteerRuntime.reserveSwarmCollectorLaunch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rechecks the requester incarnation after collector reservation and before issue", async () => {
+    const store = mockSingleAbortedSession();
+    vi.mocked(subagentRegistrySteerRuntime.reserveSwarmCollectorLaunch).mockImplementationOnce(
+      () => {
+        store["agent:main:quietchat:direct:+1234567890"].sessionId = "requester-session-B";
+        return true;
+      },
+    );
+    const result = await recoverOrphanedSubagentSessions({
+      getActiveRuns: () =>
+        createActiveRuns(createTestRunRecord({ collect: true, outputSchema: { type: "object" } })),
+    });
+
+    expect(result).toMatchObject({ recovered: 0, failed: 1 });
+    expect(result.failedRuns[0]?.error).toContain("changed before recovery dispatch");
+    expect(dispatchAgent).not.toHaveBeenCalled();
   });
 
   it("skips sessions that are not aborted", async () => {

@@ -209,6 +209,7 @@ export type RegisterSubagentRunParams = {
   childSessionKey: string;
   controllerSessionKey?: string;
   requesterSessionKey: string;
+  requesterSessionId: string;
   requesterOrigin?: DeliveryContext;
   progressOrigin?: SubagentProgressOrigin;
   requesterDisplayKey: string;
@@ -782,10 +783,13 @@ export function createSubagentRunManager(params: {
     const runId = registerParams.runId.trim();
     const childSessionKey = registerParams.childSessionKey.trim();
     const requesterSessionKey = registerParams.requesterSessionKey.trim();
+    const requesterSessionId = registerParams.requesterSessionId?.trim() ?? "";
     const requesterTurnRunId = registerParams.requesterTurnRunId?.trim();
     const controllerSessionKey = registerParams.controllerSessionKey?.trim() || requesterSessionKey;
-    if (!runId || !childSessionKey || !requesterSessionKey) {
-      return;
+    if (!runId || !childSessionKey || !requesterSessionKey || !requesterSessionId) {
+      throw new Error(
+        "run, child session, and exact requester session incarnation are required for subagent registration",
+      );
     }
     const now = Date.now();
     const generation = nextSubagentRunGeneration(params.runs.values(), childSessionKey);
@@ -811,6 +815,7 @@ export function createSubagentRunManager(params: {
       childSessionKey,
       controllerSessionKey,
       requesterSessionKey,
+      requesterSessionId,
       requesterOrigin,
       progressOrigin: registerParams.progressOrigin,
       requesterDisplayKey: registerParams.requesterDisplayKey,

@@ -171,6 +171,7 @@ function toGatewayImageAttachments(
 
 export type SpawnAcpContext = {
   agentSessionKey?: string;
+  requesterSessionId?: string;
   requesterTurnRunId?: string;
   completionOwnerKey?: string;
   requesterAgentIdOverride?: string;
@@ -1035,6 +1036,14 @@ export async function spawnAcpDirect(
     cfg,
     requesterSessionKey: ctx.agentSessionKey,
   });
+  const requesterSessionId = ctx.requesterSessionId?.trim();
+  if (!requesterSessionId) {
+    return createAcpSpawnFailure({
+      status: "error",
+      errorCode: "requester_session_required",
+      error: "sessions_spawn requires an exact requester session incarnation.",
+    });
+  }
   const requesterAgentId = normalizeAgentId(
     ctx.requesterAgentIdOverride ?? parseAgentSessionKey(requesterInternalKey)?.agentId,
   );
@@ -1448,6 +1457,7 @@ export async function spawnAcpDirect(
         childSessionKey: sessionKey,
         controllerSessionKey: ownership.controllerSessionKey,
         requesterSessionKey: ownership.completionRequesterSessionKey,
+        requesterSessionId,
         requesterOrigin,
         progressOrigin,
         requesterDisplayKey: ownership.completionRequesterDisplayKey,

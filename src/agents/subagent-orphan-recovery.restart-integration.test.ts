@@ -65,6 +65,7 @@ function makeRunRecord(overrides: Partial<SubagentRunRecord>): SubagentRunRecord
     runId: "run",
     childSessionKey: "agent:main:subagent:child",
     requesterSessionKey: "agent:main:main",
+    requesterSessionId: "sess-main-requester",
     requesterDisplayKey: "main",
     task: "restart-recoverable work",
     cleanup: "keep",

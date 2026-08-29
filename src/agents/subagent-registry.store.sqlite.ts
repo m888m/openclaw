@@ -202,6 +202,9 @@ function rowToSubagentRunRecord(row: SubagentRunSqliteRow): SubagentRunRecord | 
     childSessionKey: row.child_session_key,
     ...(row.controller_session_key ? { controllerSessionKey: row.controller_session_key } : {}),
     requesterSessionKey: row.requester_session_key,
+    // The typed column is authoritative. A legacy/null column must never gain
+    // recovery authority from an untrusted or stale payload_json field.
+    requesterSessionId: row.requester_session_id?.trim() || undefined,
     ...(requesterOrigin ? { requesterOrigin: normalizeDeliveryContext(requesterOrigin) } : {}),
     requesterDisplayKey: row.requester_display_key,
     task: row.task,
@@ -279,6 +282,7 @@ function subagentRunRecordToSqliteInsert(entry: SubagentRunRecord): SubagentRunS
     child_session_key: normalized.childSessionKey,
     controller_session_key: normalized.controllerSessionKey?.trim() || null,
     requester_session_key: normalized.requesterSessionKey,
+    requester_session_id: normalized.requesterSessionId?.trim() || null,
     requester_display_key: normalized.requesterDisplayKey,
     requester_origin_json: jsonStringify(normalized.requesterOrigin),
     task: normalized.task,

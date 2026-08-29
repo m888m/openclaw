@@ -182,6 +182,8 @@ export type SubagentRunRecord = {
   childSessionKey: string;
   controllerSessionKey?: string;
   requesterSessionKey: string;
+  /** Immutable originating requester incarnation; absent only on legacy rows. */
+  requesterSessionId?: string;
   requesterOrigin?: DeliveryContext;
   /** Durable source locator for transport-neutral progress presentation. */
   progressOrigin?: SubagentProgressOrigin;

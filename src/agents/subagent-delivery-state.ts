@@ -57,6 +57,9 @@ export function normalizeSubagentRunState(entry: SubagentRunRecord): SubagentRun
     requesterTurnRunId && entry.requesterTurnYielded === true ? true : undefined;
   entry.retireAfterRequesterTurn =
     requesterTurnRunId && entry.retireAfterRequesterTurn === true ? true : undefined;
+  const requesterSessionId =
+    typeof entry.requesterSessionId === "string" ? entry.requesterSessionId.trim() : "";
+  entry.requesterSessionId = requesterSessionId || undefined;
   entry.generation =
     typeof entry.generation === "number" &&
     Number.isSafeInteger(entry.generation) &&

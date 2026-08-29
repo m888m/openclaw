@@ -1443,6 +1443,7 @@ CREATE TABLE IF NOT EXISTS subagent_runs (
   child_session_key TEXT NOT NULL,
   controller_session_key TEXT,
   requester_session_key TEXT NOT NULL,
+  requester_session_id TEXT,
   requester_display_key TEXT NOT NULL,
   requester_origin_json TEXT,
   task TEXT NOT NULL,

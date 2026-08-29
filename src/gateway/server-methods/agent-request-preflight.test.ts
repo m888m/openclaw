@@ -3,6 +3,7 @@ import { subagentRuns } from "../../agents/subagent-registry-memory.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
 import {
   issueInternalAgentHandoffCapability,
+  type InternalAgentHandoffGeneratedMediaDelivery,
   type InternalAgentHandoffPurpose,
 } from "../internal-agent-handoff.js";
 import { prepareAgentRequestPreflight } from "./agent-request-preflight.js";
@@ -108,6 +109,8 @@ function runPurposeHandoffPreflight(params: {
   targetSessionId?: string;
   sessionWorkAdmissionHandoffId?: string;
   cfg?: Record<string, unknown>;
+  generatedMediaDelivery?: InternalAgentHandoffGeneratedMediaDelivery;
+  clientInternal?: Record<string, unknown>;
 }) {
   purposeRequestSequence += 1;
   const targetSessionKey = params.targetSessionKey ?? "agent:worker:subagent:purpose-target";
@@ -128,6 +131,7 @@ function runPurposeHandoffPreflight(params: {
     ...(params.sessionWorkAdmissionHandoffId
       ? { sessionWorkAdmissionHandoffId: params.sessionWorkAdmissionHandoffId }
       : {}),
+    generatedMediaDelivery: params.generatedMediaDelivery,
   });
   const respond = vi.fn();
   const result = prepareAgentRequestPreflight({
@@ -148,6 +152,7 @@ function runPurposeHandoffPreflight(params: {
           sourceSessionKey: "agent:clawy:operator",
           sourceSessionId: "purpose-source-session-1",
         },
+        ...params.clientInternal,
       },
     },
   } as never);
@@ -563,6 +568,86 @@ describe("agent request Swarm preflight", () => {
       }
     },
   );
+
+  it.each(handoffPurposes)(
+    "rejects raw out-of-band controls outside the exact %s capability state",
+    (purpose) => {
+      const controls: Array<{ label: string; clientInternal: Record<string, unknown> }> = [
+        { label: "cron continuation", clientInternal: { cronRunContinuation: true } },
+        {
+          label: "delivery media",
+          clientInternal: { internalDeliveryMediaUrls: ["/tmp/unrelated-proof.png"] },
+        },
+        {
+          label: "text suppression",
+          clientInternal: { internalDeliverySuppressText: true },
+        },
+      ];
+
+      for (const control of controls) {
+        const { respond, result } = runPurposeHandoffPreflight({
+          purpose,
+          request: {
+            deliver: true,
+            sourceReplyDeliveryMode: "automatic",
+            disableMessageTool: true,
+            forceRestartSafeTools: true,
+          },
+          clientInternal: control.clientInternal,
+        });
+        expect(result, `${purpose} unexpectedly admitted ${control.label}`).toBeUndefined();
+        expect(respond, `${purpose} did not reject ${control.label}`).toHaveBeenCalledWith(
+          false,
+          undefined,
+          expect.objectContaining({ code: "INVALID_REQUEST" }),
+        );
+      }
+    },
+  );
+
+  it("admits only the exact capability-bound generated-media delivery controls", () => {
+    const task = "purpose-bound handoff";
+    const mediaUrls = ["/tmp/generated-proof.png"];
+    const { respond, result } = runPurposeHandoffPreflight({
+      purpose: "agent_mediated_completion",
+      generatedMediaDelivery: {
+        task,
+        cronRunContinuation: true,
+        mediaUrls,
+        suppressTextDelivery: true,
+      },
+      request: {
+        message: task,
+        sessionId: "purpose-target-session-1",
+        deliver: true,
+        sourceReplyDeliveryMode: "automatic",
+        disableMessageTool: true,
+        forceRestartSafeTools: true,
+      },
+      clientInternal: {
+        cronRunContinuation: true,
+        internalDeliveryMediaUrls: mediaUrls,
+        internalDeliverySuppressText: true,
+      },
+    });
+
+    expect(respond).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      canUseCronRunContinuation: true,
+      internalDeliveryMediaUrls: mediaUrls,
+      internalDeliverySuppressText: true,
+      admittedInternalHandoff: {
+        purpose: "agent_mediated_completion",
+        sourceTool: "image_generate",
+        generatedMediaDelivery: {
+          task,
+          cronRunContinuation: true,
+          mediaUrls,
+          suppressTextDelivery: true,
+        },
+      },
+    });
+  });
 
   it.each(handoffPurposes)(
     "admits hidden-session effects only for an exact %s resume shape",

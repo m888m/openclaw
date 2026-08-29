@@ -86,6 +86,8 @@ export function startAgentRunExecution(params: {
   effectiveTranscriptInputText: string;
   inputProvenance?: InputProvenance;
   admittedInternalHandoff?: AdmittedInternalHandoff;
+  internalDeliveryMediaUrls?: string[];
+  internalDeliverySuppressText: boolean;
   runId: string;
   idempotencyKey: string;
   agentDedupeKeys: readonly string[];
@@ -383,8 +385,8 @@ export function startAgentRunExecution(params: {
           swarmCollector: params.request.swarmCollector,
           swarmOutputSchema: params.request.swarmOutputSchema,
           forceRestartSafeTools: params.request.forceRestartSafeTools,
-          internalDeliveryMediaUrls: params.client?.internal?.internalDeliveryMediaUrls,
-          internalDeliverySuppressText: params.client?.internal?.internalDeliverySuppressText,
+          internalDeliveryMediaUrls: params.internalDeliveryMediaUrls,
+          internalDeliverySuppressText: params.internalDeliverySuppressText,
           suppressPromptPersistence:
             params.requestedPromptPersistenceSuppression ||
             shouldSuppressAgentPromptPersistence({

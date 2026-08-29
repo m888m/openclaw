@@ -206,7 +206,14 @@ async function runAnnounceAgentCall(params: {
       targetSessionId: params.targetSessionId,
       requestId,
       request,
-      allowSyntheticCronRunContinuation: params.cronRunContinuation,
+      ...(params.purpose === "agent_mediated_completion" && params.cronRunContinuation === true
+        ? {
+            generatedMediaDelivery: {
+              task: String(request.message ?? ""),
+              cronRunContinuation: true,
+            },
+          }
+        : {}),
       delegatedToolPolicyHandoff: params.purpose === "subagent_announce",
       expectFinal: params.expectFinal,
       onAccepted,

@@ -470,10 +470,13 @@ export async function deliverQueuedGeneratedMediaAgentTurn(params: {
         forceRestartSafeTools: true,
         idempotencyKey: queuedRunId,
       },
-      allowSyntheticCronRunContinuation: Boolean(cronSessionId),
+      generatedMediaDelivery: {
+        task: entry.message,
+        cronRunContinuation: Boolean(cronSessionId),
+        mediaUrls: entry.expectedMediaUrls ?? [],
+        suppressTextDelivery: entry.suppressTextDelivery === true,
+      },
       expectFinal: true,
-      internalDeliveryMediaUrls: entry.expectedMediaUrls ?? [],
-      internalDeliverySuppressText: entry.suppressTextDelivery === true,
       onAccepted: () => {
         accepted = true;
       },

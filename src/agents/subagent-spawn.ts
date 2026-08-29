@@ -205,6 +205,7 @@ type SpawnSubagentParams = {
 
 type SpawnSubagentContext = {
   agentSessionKey?: string;
+  requesterSessionId?: string;
   requesterTurnRunId?: string;
   /** Separate key used only for completion routing, not sandbox policy. */
   completionOwnerKey?: string;
@@ -1106,6 +1107,13 @@ export async function spawnSubagentDirect(
   });
   const { mainKey, alias } = resolveMainSessionAlias(cfg);
   const requesterSessionKey = ctx.agentSessionKey;
+  const requesterSessionId = ctx.requesterSessionId?.trim();
+  if (!requesterSessionId) {
+    return {
+      status: "error",
+      error: "sessions_spawn requires an exact requester session incarnation.",
+    };
+  }
   const requesterInternalKey = requesterSessionKey
     ? resolveInternalSessionKey({
         key: requesterSessionKey,
@@ -1816,6 +1824,7 @@ export async function spawnSubagentDirect(
           childSessionKey,
           controllerSessionKey: ownership.controllerSessionKey,
           requesterSessionKey: ownership.completionRequesterSessionKey,
+          requesterSessionId,
           requesterOrigin,
           progressOrigin,
           requesterDisplayKey: ownership.completionRequesterDisplayKey,

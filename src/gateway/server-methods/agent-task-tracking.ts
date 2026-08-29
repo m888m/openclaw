@@ -5,7 +5,12 @@ import {
 } from "../../../packages/gateway-protocol/src/client-info.js";
 import { readAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import { isTimeoutError } from "../../agents/failover-error.js";
-import { resolveAgentIdFromSessionKey, resolveAgentMainSessionKey } from "../../config/sessions.js";
+import {
+  resolveAgentIdFromSessionKey,
+  resolveAgentMainSessionKey,
+  resolveStorePath,
+} from "../../config/sessions.js";
+import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isAbortError } from "../../infra/abort-signal.js";
 import { isAcpSessionKey } from "../../routing/session-key.js";
@@ -169,12 +174,22 @@ export async function registerPluginSubagentRunFromGateway(params: {
     cfg: params.cfg,
     agentId: resolveAgentIdFromSessionKey(childSessionKey),
   });
+  const requesterSessionId = loadSessionEntry({
+    storePath: resolveStorePath(params.cfg.session?.store, {
+      agentId: resolveAgentIdFromSessionKey(ownerSessionKey),
+    }),
+    sessionKey: ownerSessionKey,
+  })?.sessionId?.trim();
+  if (!requesterSessionId) {
+    throw new Error("plugin subagent tracking requires an exact requester session incarnation");
+  }
   const { registerSubagentRun } = await import("../../agents/subagent-registry.js");
   registerSubagentRun({
     runId: params.runId,
     childSessionKey,
     controllerSessionKey: ownerSessionKey,
     requesterSessionKey: ownerSessionKey,
+    requesterSessionId,
     requesterOrigin: params.requesterOrigin,
     requesterDisplayKey: "main",
     task: params.task,

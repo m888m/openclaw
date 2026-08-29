@@ -28,6 +28,27 @@ const AGENT_MEDIATED_COMPLETION_SOURCE_TOOLS = new Set([
   "video_generate",
 ]);
 
+const GENERATED_MEDIA_COMPLETION_SOURCE_TOOLS = new Set([
+  "image_generate",
+  "music_generate",
+  "video_generate",
+]);
+
+export type InternalAgentHandoffGeneratedMediaDelivery = Readonly<{
+  /** Exact host-owned task text whose completion is being delivered. */
+  task: string;
+  cronRunContinuation?: boolean;
+  mediaUrls?: readonly string[];
+  suppressTextDelivery?: boolean;
+}>;
+
+export type BoundGeneratedMediaDelivery = Readonly<{
+  task: string;
+  cronRunContinuation: boolean;
+  mediaUrls?: readonly string[];
+  suppressTextDelivery: boolean;
+}>;
+
 /** Exact installed owner/tool allowed to consume a sessions_send run authority. */
 export const INTERNAL_AGENT_HANDOFF_PROTECTED_PLUGIN_ID = "tony-postman-a2a";
 export const INTERNAL_AGENT_HANDOFF_PROTECTED_TOOL_NAME = "postman_lookup";
@@ -57,6 +78,7 @@ export type AdmittedInternalHandoff = Readonly<{
   readonly issuedAtMs: number;
   readonly deadlineMs: number;
   readonly provenance: Readonly<InputProvenance>;
+  readonly generatedMediaDelivery?: BoundGeneratedMediaDelivery;
 }>;
 
 type IssuedHandoff = {
@@ -73,6 +95,7 @@ type IssuedHandoff = {
   readonly lifecycleGeneration: string;
   readonly issuedAtMs: number;
   readonly deadlineMs: number;
+  readonly generatedMediaDelivery?: BoundGeneratedMediaDelivery;
 };
 
 type AdmittedHandoffState = {
@@ -96,6 +119,71 @@ function normalizeRequired(value: unknown, name: string): string {
 
 function normalizeOptional(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeGeneratedMediaDelivery(params: {
+  purpose: InternalAgentHandoffPurpose;
+  sourceTool: string;
+  delivery?: InternalAgentHandoffGeneratedMediaDelivery;
+}): BoundGeneratedMediaDelivery | undefined {
+  if (!params.delivery) {
+    return undefined;
+  }
+  if (
+    params.purpose !== "agent_mediated_completion" ||
+    !GENERATED_MEDIA_COMPLETION_SOURCE_TOOLS.has(params.sourceTool)
+  ) {
+    throw new Error(
+      "generated-media delivery controls require an allowlisted agent-mediated completion.",
+    );
+  }
+  if (typeof params.delivery.task !== "string" || !params.delivery.task.trim()) {
+    throw new Error("generated-media delivery task is required.");
+  }
+  let mediaUrls: readonly string[] | undefined;
+  if (params.delivery.mediaUrls !== undefined) {
+    if (!Array.isArray(params.delivery.mediaUrls)) {
+      throw new Error("generated-media delivery mediaUrls must be an array.");
+    }
+    const normalizedMediaUrls = Array.from(params.delivery.mediaUrls, (value) => {
+      if (typeof value !== "string" || !value.trim() || value !== value.trim()) {
+        throw new Error("generated-media delivery mediaUrls must contain normalized strings.");
+      }
+      return value;
+    });
+    if (new Set(normalizedMediaUrls).size !== normalizedMediaUrls.length) {
+      throw new Error("generated-media delivery mediaUrls must not contain duplicates.");
+    }
+    mediaUrls = Object.freeze(normalizedMediaUrls);
+  }
+  const cronRunContinuation = params.delivery.cronRunContinuation === true;
+  const suppressTextDelivery = params.delivery.suppressTextDelivery === true;
+  if (!cronRunContinuation && mediaUrls === undefined && !suppressTextDelivery) {
+    throw new Error("generated-media delivery must bind at least one out-of-band control.");
+  }
+  if (suppressTextDelivery && (!mediaUrls || mediaUrls.length === 0)) {
+    throw new Error("generated-media text suppression requires at least one bound media URL.");
+  }
+  return Object.freeze({
+    task: params.delivery.task,
+    cronRunContinuation,
+    ...(mediaUrls ? { mediaUrls } : {}),
+    suppressTextDelivery,
+  });
+}
+
+function exactStringArrayMatches(
+  actual: unknown,
+  expected: readonly string[] | undefined,
+): boolean {
+  if (expected === undefined) {
+    return actual === undefined;
+  }
+  return (
+    Array.isArray(actual) &&
+    actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index])
+  );
 }
 
 function freezeProvenance(params: IssuedHandoff): Readonly<InputProvenance> {
@@ -152,6 +240,7 @@ export function issueInternalAgentHandoffCapability(params: {
   deadlineMs?: number;
   lifecycleGeneration?: string;
   nowMs?: number;
+  generatedMediaDelivery?: InternalAgentHandoffGeneratedMediaDelivery;
 }): InternalAgentHandoffCapability {
   const nowMs = params.nowMs ?? Date.now();
   const purposeProvenance = resolvePurposeProvenance(params);
@@ -173,6 +262,11 @@ export function issueInternalAgentHandoffCapability(params: {
   }
   const lifecycleGeneration =
     normalizeOptional(params.lifecycleGeneration) ?? getAgentEventLifecycleGeneration();
+  const generatedMediaDelivery = normalizeGeneratedMediaDelivery({
+    purpose: purposeProvenance.purpose,
+    sourceTool: purposeProvenance.sourceTool,
+    delivery: params.generatedMediaDelivery,
+  });
   const issued: IssuedHandoff = Object.freeze({
     ...purposeProvenance,
     sourceSessionKey,
@@ -187,6 +281,7 @@ export function issueInternalAgentHandoffCapability(params: {
     lifecycleGeneration,
     issuedAtMs: nowMs,
     deadlineMs,
+    ...(generatedMediaDelivery ? { generatedMediaDelivery } : {}),
   });
   const capability = Object.freeze({}) as InternalAgentHandoffCapability;
   issuedHandoffs.set(capability, issued);
@@ -207,6 +302,10 @@ export function consumeInternalAgentHandoffCapability(params: {
   sessionWorkAdmissionHandoffId?: string;
   lifecycleGeneration?: string;
   nowMs?: number;
+  requestMessage?: unknown;
+  cronRunContinuation?: unknown;
+  internalDeliveryMediaUrls?: unknown;
+  internalDeliverySuppressText?: unknown;
 }): AdmittedInternalHandoff | undefined {
   if (
     !params.capability ||
@@ -231,6 +330,7 @@ export function consumeInternalAgentHandoffCapability(params: {
   const sessionWorkAdmissionHandoffId = normalizeOptional(params.sessionWorkAdmissionHandoffId);
   const lifecycleGeneration =
     normalizeOptional(params.lifecycleGeneration) ?? getAgentEventLifecycleGeneration();
+  const generatedMediaDelivery = issued.generatedMediaDelivery;
   if (
     !sourceSessionKey ||
     sourceSessionKey !== issued.sourceSessionKey ||
@@ -244,7 +344,13 @@ export function consumeInternalAgentHandoffCapability(params: {
     requestId !== issued.requestId ||
     sessionWorkAdmissionHandoffId !== issued.sessionWorkAdmissionHandoffId ||
     lifecycleGeneration !== issued.lifecycleGeneration ||
-    nowMs > issued.deadlineMs
+    nowMs > issued.deadlineMs ||
+    (params.cronRunContinuation === true) !==
+      (generatedMediaDelivery?.cronRunContinuation === true) ||
+    !exactStringArrayMatches(params.internalDeliveryMediaUrls, generatedMediaDelivery?.mediaUrls) ||
+    (params.internalDeliverySuppressText === true) !==
+      (generatedMediaDelivery?.suppressTextDelivery === true) ||
+    (generatedMediaDelivery !== undefined && params.requestMessage !== generatedMediaDelivery.task)
   ) {
     return undefined;
   }
@@ -264,6 +370,7 @@ export function consumeInternalAgentHandoffCapability(params: {
     issuedAtMs: issued.issuedAtMs,
     deadlineMs: issued.deadlineMs,
     provenance: freezeProvenance(issued),
+    ...(generatedMediaDelivery ? { generatedMediaDelivery } : {}),
   }) as AdmittedInternalHandoff;
   admittedHandoffs.set(authority, { authority, state: "admitted" });
   return authority;
@@ -363,11 +470,9 @@ export type InternalAgentHandoffDispatchParams = {
   targetSessionId: string;
   requestId: string;
   request: Record<string, unknown>;
-  allowSyntheticCronRunContinuation?: boolean;
+  generatedMediaDelivery?: InternalAgentHandoffGeneratedMediaDelivery;
   delegatedToolPolicyHandoff?: boolean;
   expectFinal?: boolean;
-  internalDeliveryMediaUrls?: string[];
-  internalDeliverySuppressText?: boolean;
   onAccepted?: (payload: unknown) => void;
   timeoutMs?: number;
 };
@@ -376,7 +481,66 @@ export function prepareInternalAgentHandoffDispatch(params: InternalAgentHandoff
   capability: InternalAgentHandoffCapability;
   source: InternalAgentHandoffSourceBinding;
   request: Record<string, unknown>;
+  clientControls: Readonly<{
+    cronRunContinuation?: true;
+    internalDeliveryMediaUrls?: readonly string[];
+    internalDeliverySuppressText?: true;
+  }>;
 } {
+  const generatedMediaDelivery = params.generatedMediaDelivery;
+  if (generatedMediaDelivery) {
+    if (params.request.message !== generatedMediaDelivery.task) {
+      throw new Error("generated-media handoff task does not match the dispatched request.");
+    }
+    if (
+      generatedMediaDelivery.cronRunContinuation === true &&
+      (typeof params.request.sessionId !== "string" || !params.request.sessionId.trim())
+    ) {
+      throw new Error("generated-media cron continuation requires an exact session id.");
+    }
+    if (
+      generatedMediaDelivery.mediaUrls !== undefined ||
+      generatedMediaDelivery.suppressTextDelivery === true
+    ) {
+      if (
+        params.request.sourceReplyDeliveryMode !== "automatic" ||
+        params.request.disableMessageTool !== true ||
+        params.request.forceRestartSafeTools !== true
+      ) {
+        throw new Error("generated-media delivery controls require the safe delivery lifecycle.");
+      }
+    }
+    if (
+      generatedMediaDelivery.cronRunContinuation === true &&
+      generatedMediaDelivery.mediaUrls === undefined
+    ) {
+      const expectedEventSource =
+        params.sourceTool === "image_generate"
+          ? "image_generation"
+          : params.sourceTool === "music_generate"
+            ? "music_generation"
+            : params.sourceTool === "video_generate"
+              ? "video_generation"
+              : undefined;
+      const internalEvents = Array.isArray(params.request.internalEvents)
+        ? params.request.internalEvents
+        : [];
+      if (
+        !expectedEventSource ||
+        !internalEvents.some(
+          (event) =>
+            event !== null &&
+            typeof event === "object" &&
+            (event as { type?: unknown }).type === "task_completion" &&
+            (event as { source?: unknown }).source === expectedEventSource,
+        )
+      ) {
+        throw new Error(
+          "generated-media cron continuation requires its exact completion event lifecycle.",
+        );
+      }
+    }
+  }
   const lifecycleGeneration = getAgentEventLifecycleGeneration();
   const capability = issueInternalAgentHandoffCapability({
     purpose: params.purpose,
@@ -394,6 +558,7 @@ export function prepareInternalAgentHandoffDispatch(params: InternalAgentHandoff
       : {}),
     lifecycleGeneration,
     deadlineMs: Date.now() + Math.max(5_000, params.timeoutMs ?? 10_000),
+    generatedMediaDelivery,
   });
   const request = { ...params.request };
   // Provenance is derived by preflight from the consumed capability. It must
@@ -402,6 +567,18 @@ export function prepareInternalAgentHandoffDispatch(params: InternalAgentHandoff
   request.sessionKey = params.targetSessionKey;
   request.idempotencyKey = params.requestId;
   request.expectedExistingSessionId = params.targetSessionId;
+  const issuedGeneratedMediaDelivery = issuedHandoffs.get(capability)?.generatedMediaDelivery;
+  const clientControls = Object.freeze({
+    ...(issuedGeneratedMediaDelivery?.cronRunContinuation
+      ? { cronRunContinuation: true as const }
+      : {}),
+    ...(issuedGeneratedMediaDelivery?.mediaUrls
+      ? { internalDeliveryMediaUrls: issuedGeneratedMediaDelivery.mediaUrls }
+      : {}),
+    ...(issuedGeneratedMediaDelivery?.suppressTextDelivery
+      ? { internalDeliverySuppressText: true as const }
+      : {}),
+  });
   return {
     capability,
     source: Object.freeze({
@@ -409,6 +586,7 @@ export function prepareInternalAgentHandoffDispatch(params: InternalAgentHandoff
       sourceSessionId: normalizeRequired(params.sourceSessionId, "sourceSessionId"),
     }),
     request,
+    clientControls,
   };
 }
 
@@ -421,11 +599,13 @@ export async function dispatchAgentHandoffInProcess<T = { runId?: string }>(
     forceSyntheticClient: true,
     agentHandoffCapability: prepared.capability,
     agentHandoffSource: prepared.source,
-    allowSyntheticCronRunContinuation: params.allowSyntheticCronRunContinuation,
+    allowSyntheticCronRunContinuation: prepared.clientControls.cronRunContinuation,
     delegatedToolPolicyHandoff: params.delegatedToolPolicyHandoff,
     expectFinal: params.expectFinal,
-    internalDeliveryMediaUrls: params.internalDeliveryMediaUrls,
-    internalDeliverySuppressText: params.internalDeliverySuppressText,
+    internalDeliveryMediaUrls: prepared.clientControls.internalDeliveryMediaUrls
+      ? [...prepared.clientControls.internalDeliveryMediaUrls]
+      : undefined,
+    internalDeliverySuppressText: prepared.clientControls.internalDeliverySuppressText,
     onAccepted: params.onAccepted,
     timeoutMs: params.timeoutMs ?? 10_000,
   });

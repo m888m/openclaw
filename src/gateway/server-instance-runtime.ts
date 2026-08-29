@@ -84,7 +84,11 @@ export function createGatewayInstanceRuntime(
       const client = createSyntheticPluginRuntimeClient({
         agentHandoffCapability: prepared.capability,
         agentHandoffSource: prepared.source,
-        cronRunContinuation: params.allowSyntheticCronRunContinuation === true,
+        cronRunContinuation: prepared.clientControls.cronRunContinuation === true,
+        internalDeliveryMediaUrls: prepared.clientControls.internalDeliveryMediaUrls
+          ? [...prepared.clientControls.internalDeliveryMediaUrls]
+          : undefined,
+        internalDeliverySuppressText: prepared.clientControls.internalDeliverySuppressText,
       });
       return await dispatch<T>({
         allowedMethods: recoveryMethods,

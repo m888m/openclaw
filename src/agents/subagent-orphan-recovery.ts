@@ -169,30 +169,53 @@ async function resumeOrphanedSession(params: {
 
   try {
     const idempotencyKey = crypto.randomUUID();
+    const dispatchAgentHandoff = params.gatewayRuntime.dispatchAgentHandoff;
+    if (!dispatchAgentHandoff) {
+      return { resumed: false, error: "purpose-bound recovery dispatcher is unavailable" };
+    }
+    const sourceSessionKey = params.originalRun.requesterSessionKey.trim();
+    const persistedSourceSessionId = params.originalRun.requesterSessionId?.trim();
+    if (!persistedSourceSessionId) {
+      return {
+        resumed: false,
+        error: "legacy subagent run has no authoritative requester session incarnation",
+      };
+    }
+    const sourceStorePath = resolveStorePath(getRuntimeConfig().session?.store, {
+      agentId: resolveAgentIdFromSessionKey(sourceSessionKey),
+    });
+    const loadCurrentSourceSessionId = () =>
+      loadSessionEntry({
+        storePath: sourceStorePath,
+        sessionKey: sourceSessionKey,
+      })?.sessionId?.trim();
+    const initialSourceSessionId = loadCurrentSourceSessionId();
+    if (initialSourceSessionId !== persistedSourceSessionId) {
+      return {
+        resumed: false,
+        error: "requester source session incarnation changed since subagent registration",
+      };
+    }
     if (
       params.originalRun.collect === true &&
       !reserveSwarmCollectorLaunch(params.originalRunId, idempotencyKey)
     ) {
       return { resumed: false, error: "failed to reserve collector recovery launch" };
     }
-    const dispatchAgentHandoff = params.gatewayRuntime.dispatchAgentHandoff;
-    if (!dispatchAgentHandoff) {
-      return { resumed: false, error: "purpose-bound recovery dispatcher is unavailable" };
-    }
-    const sourceSessionKey = params.originalRun.requesterSessionKey.trim();
-    const sourceSessionId = loadSessionEntry({
-      storePath: resolveStorePath(getRuntimeConfig().session?.store, {
-        agentId: resolveAgentIdFromSessionKey(sourceSessionKey),
-      }),
-      sessionKey: sourceSessionKey,
-    })?.sessionId?.trim();
-    if (!sourceSessionId) {
-      return { resumed: false, error: "requester source session incarnation is unavailable" };
+    // Collector reservation and future retry hooks may synchronously mutate
+    // session state. Re-resolve at the final issuance boundary; never rebind an
+    // old run to a new incarnation occupying the same key.
+    const finalSourceSessionId = loadCurrentSourceSessionId();
+    if (finalSourceSessionId !== persistedSourceSessionId) {
+      return {
+        resumed: false,
+        error: "requester source session incarnation changed before recovery dispatch",
+      };
     }
     const result = await dispatchAgentHandoff<{ runId: string }>({
       purpose: "subagent_interrupted_resume",
       sourceSessionKey,
-      sourceSessionId,
+      sourceSessionId: persistedSourceSessionId,
       sourceChannel: "internal",
       targetSessionKey: params.sessionKey,
       targetSessionId: params.targetSessionId,

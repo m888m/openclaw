@@ -38,12 +38,14 @@ let fallbackRequesterResolution: {
   requesterOrigin?: { channel?: string; to?: string; accountId?: string };
 } | null = null;
 let chatHistoryMessages: Array<Record<string, unknown>> = [];
+let onChatHistoryRead: () => void = () => undefined;
 
 function createGatewayCallModuleMock() {
   return {
     callGateway: vi.fn(async (request: GatewayCall) => {
       gatewayCalls.push(request);
       if (request.method === "chat.history") {
+        onChatHistoryRead();
         return { messages: chatHistoryMessages };
       }
       return await callGatewayImpl(request);
@@ -83,6 +85,7 @@ vi.mock("./subagent-announce-delivery.runtime.js", () =>
       const typed = request as GatewayCall;
       gatewayCalls.push(typed);
       if (typed.method === "chat.history") {
+        onChatHistoryRead();
         return { messages: chatHistoryMessages };
       }
       return await callGatewayImpl(typed);
@@ -244,7 +247,15 @@ function setConfiguredAnnounceTimeout(timeoutMs: number): void {
 async function runAnnounceFlowForTest(
   childRunId: string,
   overrides: Partial<AnnounceFlowParams> = {},
+  options?: { hydrateSource?: boolean },
 ): Promise<boolean> {
+  const childSessionKey = overrides.childSessionKey ?? baseAnnounceFlowParams.childSessionKey;
+  if (options?.hydrateSource !== false && !sessionStore[childSessionKey]) {
+    sessionStore[childSessionKey] = {
+      sessionId: `session:${childSessionKey}`,
+      updatedAt: Date.now(),
+    };
+  }
   return await runSubagentAnnounceFlow({
     ...baseAnnounceFlowParams,
     childRunId,
@@ -292,6 +303,64 @@ describe("subagent announce timeout config", () => {
     isEmbeddedAgentRunActiveMock.mockReset().mockReturnValue(false);
     waitForEmbeddedAgentRunEndMock.mockReset().mockResolvedValue(true);
     fallbackRequesterResolution = null;
+    onChatHistoryRead = () => undefined;
+  });
+
+  it("fails closed when the child source incarnation is missing", async () => {
+    const didAnnounce = await runAnnounceFlowForTest(
+      "run-missing-source-incarnation",
+      {},
+      { hydrateSource: false },
+    );
+
+    expect(didAnnounce).toBe(false);
+    expect(findFinalDirectAgentCall()).toBeUndefined();
+  });
+
+  it("fails closed when the child source is deleted before handoff issuance", async () => {
+    onChatHistoryRead = () => {
+      delete sessionStore[baseAnnounceFlowParams.childSessionKey];
+      onChatHistoryRead = () => undefined;
+    };
+    const didAnnounce = await runAnnounceFlowForTest("run-deleted-source-incarnation", {
+      roundOneReply: undefined,
+    });
+
+    expect(didAnnounce).toBe(false);
+    expect(findFinalDirectAgentCall()).toBeUndefined();
+  });
+
+  it("fails closed when the child source incarnation rotates before handoff issuance", async () => {
+    onChatHistoryRead = () => {
+      sessionStore[baseAnnounceFlowParams.childSessionKey] = {
+        sessionId: "rotated-source-session",
+        updatedAt: Date.now(),
+      };
+      onChatHistoryRead = () => undefined;
+    };
+    const didAnnounce = await runAnnounceFlowForTest("run-rotated-source-incarnation", {
+      roundOneReply: undefined,
+    });
+
+    expect(didAnnounce).toBe(false);
+    expect(findFinalDirectAgentCall()).toBeUndefined();
+  });
+
+  it("fails closed when a deleted child key is reused before handoff issuance", async () => {
+    onChatHistoryRead = () => {
+      delete sessionStore[baseAnnounceFlowParams.childSessionKey];
+      sessionStore[baseAnnounceFlowParams.childSessionKey] = {
+        sessionId: "reused-source-session",
+        updatedAt: Date.now(),
+      };
+      onChatHistoryRead = () => undefined;
+    };
+    const didAnnounce = await runAnnounceFlowForTest("run-reused-source-incarnation", {
+      roundOneReply: undefined,
+    });
+
+    expect(didAnnounce).toBe(false);
+    expect(findFinalDirectAgentCall()).toBeUndefined();
   });
 
   it("uses 120s timeout by default for direct announce agent call", async () => {

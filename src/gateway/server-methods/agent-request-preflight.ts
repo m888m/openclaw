@@ -53,6 +53,8 @@ type AgentRequestPreflight = {
   canUseInternalRuntimeHandoff: boolean;
   admittedInternalHandoff?: AdmittedInternalHandoff;
   canUseCronRunContinuation: boolean;
+  internalDeliveryMediaUrls?: string[];
+  internalDeliverySuppressText: boolean;
   expectedSession?: ExpectedExistingSessionConstraint;
   expectedExistingSessionId?: string;
   providerOverride?: string;
@@ -106,6 +108,10 @@ export function prepareAgentRequestPreflight(
           requestId: request.idempotencyKey,
           sessionWorkAdmissionHandoffId: request.internalRuntimeHandoffId,
           lifecycleGeneration,
+          requestMessage: request.message,
+          cronRunContinuation: params.client?.internal?.cronRunContinuation,
+          internalDeliveryMediaUrls: params.client?.internal?.internalDeliveryMediaUrls,
+          internalDeliverySuppressText: params.client?.internal?.internalDeliverySuppressText,
         })
       : undefined
     : undefined;
@@ -243,7 +249,17 @@ export function prepareAgentRequestPreflight(
     return undefined;
   }
   const allowModelOverride = resolveAllowModelOverrideFromClient(params.client);
-  const canUseCronRunContinuation = resolveCanUseCronRunContinuation(params.client);
+  const canUseCronRunContinuation = admittedInternalHandoff
+    ? admittedInternalHandoff.generatedMediaDelivery?.cronRunContinuation === true
+    : resolveCanUseCronRunContinuation(params.client);
+  const internalDeliveryMediaUrls = admittedInternalHandoff
+    ? admittedInternalHandoff.generatedMediaDelivery?.mediaUrls
+      ? [...admittedInternalHandoff.generatedMediaDelivery.mediaUrls]
+      : undefined
+    : params.client?.internal?.internalDeliveryMediaUrls;
+  const internalDeliverySuppressText = admittedInternalHandoff
+    ? admittedInternalHandoff.generatedMediaDelivery?.suppressTextDelivery === true
+    : params.client?.internal?.internalDeliverySuppressText === true;
   const expectedSessionResult = admittedInternalHandoff
     ? normalizeOptionalString(request.internalRuntimeHandoffId) !==
       admittedInternalHandoff.sessionWorkAdmissionHandoffId
@@ -390,6 +406,8 @@ export function prepareAgentRequestPreflight(
     }),
     inputProvenance,
     admittedInternalHandoff,
+    internalDeliveryMediaUrls,
+    internalDeliverySuppressText,
     isRestartRecoveryResumeRun:
       canUseInternalRuntimeHandoff && isMainSessionRestartRecoveryInputProvenance(inputProvenance),
     preserveUserFacingSessionModelState:

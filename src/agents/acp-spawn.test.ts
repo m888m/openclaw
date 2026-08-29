@@ -237,10 +237,16 @@ vi.mock("../tasks/runtime-internal.js", () => ({
   listTasksForOwnerKey: hoisted.listTasksForOwnerKeyMock,
 }));
 
-const { isSpawnAcpAcceptedResult, spawnAcpDirect } = await import("./acp-spawn.js");
-type SpawnRequest = Parameters<typeof spawnAcpDirect>[0];
-type SpawnContext = Parameters<typeof spawnAcpDirect>[1];
-type SpawnResult = Awaited<ReturnType<typeof spawnAcpDirect>>;
+const { isSpawnAcpAcceptedResult, spawnAcpDirect: spawnAcpDirectProduction } =
+  await import("./acp-spawn.js");
+type SpawnRequest = Parameters<typeof spawnAcpDirectProduction>[0];
+type SpawnContext = Parameters<typeof spawnAcpDirectProduction>[1];
+type SpawnResult = Awaited<ReturnType<typeof spawnAcpDirectProduction>>;
+const spawnAcpDirect: typeof spawnAcpDirectProduction = async (params, context) =>
+  await spawnAcpDirectProduction(params, {
+    requesterSessionId: "requester-session-test",
+    ...context,
+  });
 type AgentCallParams = {
   deliver?: boolean;
   channel?: string;
@@ -841,6 +847,19 @@ describe("spawnAcpDirect", () => {
           },
         };
       });
+  });
+
+  it("fails closed before ACP spawn when requester incarnation is unavailable", async () => {
+    const result = await spawnAcpDirectProduction(createSpawnRequest(), {
+      agentSessionKey: "agent:main:main",
+    });
+
+    expect(result).toMatchObject({
+      status: "error",
+      errorCode: "requester_session_required",
+      error: expect.stringContaining("exact requester session incarnation"),
+    });
+    expect(hoisted.callGatewayMock).not.toHaveBeenCalled();
   });
 
   afterEach(() => {

@@ -33,6 +33,7 @@ const hoisted = vi.hoisted(() => ({
 
 let resetSubagentRegistryForTests: typeof import("./subagent-registry.test-helpers.js").resetSubagentRegistryForTests;
 let spawnSubagentDirect: typeof import("./subagent-spawn.js").spawnSubagentDirect;
+let spawnSubagentDirectProduction: typeof import("./subagent-spawn.js").spawnSubagentDirect;
 
 function createConfigOverride(overrides?: Record<string, unknown>) {
   return createSubagentSpawnTestConfig(os.tmpdir(), {
@@ -75,27 +76,33 @@ function firstRegisteredSubagentRun(): Record<string, unknown> {
 
 describe("spawnSubagentDirect seam flow", () => {
   beforeAll(async () => {
-    ({ resetSubagentRegistryForTests, spawnSubagentDirect } = await loadSubagentSpawnModuleForTest({
-      callGatewayMock: hoisted.callGatewayMock,
-      dispatchGatewayMethodInProcessMock: hoisted.dispatchGatewayMethodInProcessMock,
-      hasInProcessGatewayContextMock: hoisted.hasInProcessGatewayContextMock,
-      getRuntimeConfig: () => hoisted.configOverride,
-      loadSessionStoreMock: hoisted.loadSessionStoreMock,
-      loadPreparedModelCatalogMock: hoisted.loadPreparedModelCatalogMock,
-      updateSessionStoreMock: hoisted.updateSessionStoreMock,
-      registerSubagentRunMock: hoisted.registerSubagentRunMock,
-      startQueuedSubagentRunMock: hoisted.startQueuedSubagentRunMock,
-      settleFailedQueuedSubagentLaunchMock: hoisted.settleFailedQueuedSubagentLaunchMock,
-      completeCollectorLaunchCleanupMock: hoisted.completeCollectorLaunchCleanupMock,
-      emitSessionLifecycleEventMock: hoisted.emitSessionLifecycleEventMock,
-      resolveAgentConfig: hoisted.resolveAgentConfigMock,
-      resolveContextEngineMock: hoisted.resolveContextEngineMock,
-      countActiveRunsForSession: hoisted.countActiveRunsForSessionMock,
-      listSwarmRunsForGroup: hoisted.listSwarmRunsForGroupMock,
-      resolveSubagentSpawnModelSelection: () => "openai/gpt-5.4",
-      resolveSandboxRuntimeStatus: () => ({ sandboxed: false }),
-      sessionStorePath: "/tmp/subagent-spawn-session-store.json",
-    }));
+    ({ resetSubagentRegistryForTests, spawnSubagentDirect: spawnSubagentDirectProduction } =
+      await loadSubagentSpawnModuleForTest({
+        callGatewayMock: hoisted.callGatewayMock,
+        dispatchGatewayMethodInProcessMock: hoisted.dispatchGatewayMethodInProcessMock,
+        hasInProcessGatewayContextMock: hoisted.hasInProcessGatewayContextMock,
+        getRuntimeConfig: () => hoisted.configOverride,
+        loadSessionStoreMock: hoisted.loadSessionStoreMock,
+        loadPreparedModelCatalogMock: hoisted.loadPreparedModelCatalogMock,
+        updateSessionStoreMock: hoisted.updateSessionStoreMock,
+        registerSubagentRunMock: hoisted.registerSubagentRunMock,
+        startQueuedSubagentRunMock: hoisted.startQueuedSubagentRunMock,
+        settleFailedQueuedSubagentLaunchMock: hoisted.settleFailedQueuedSubagentLaunchMock,
+        completeCollectorLaunchCleanupMock: hoisted.completeCollectorLaunchCleanupMock,
+        emitSessionLifecycleEventMock: hoisted.emitSessionLifecycleEventMock,
+        resolveAgentConfig: hoisted.resolveAgentConfigMock,
+        resolveContextEngineMock: hoisted.resolveContextEngineMock,
+        countActiveRunsForSession: hoisted.countActiveRunsForSessionMock,
+        listSwarmRunsForGroup: hoisted.listSwarmRunsForGroupMock,
+        resolveSubagentSpawnModelSelection: () => "openai/gpt-5.4",
+        resolveSandboxRuntimeStatus: () => ({ sandboxed: false }),
+        sessionStorePath: "/tmp/subagent-spawn-session-store.json",
+      }));
+    spawnSubagentDirect = async (params, context) =>
+      await spawnSubagentDirectProduction(params, {
+        requesterSessionId: "requester-session-test",
+        ...context,
+      });
   });
 
   beforeEach(() => {
@@ -139,6 +146,19 @@ describe("spawnSubagentDirect seam flow", () => {
   afterEach(() => {
     swarmSchedulerTesting.reset();
     vi.unstubAllEnvs();
+  });
+
+  it("fails closed before native spawn when requester incarnation is unavailable", async () => {
+    const result = await spawnSubagentDirectProduction(
+      { task: "do not spawn" },
+      { agentSessionKey: "agent:main:main" },
+    );
+
+    expect(result).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("exact requester session incarnation"),
+    });
+    expect(gatewayRequestRecords()).toEqual([]);
   });
 
   it("rejects direct swarm parameters while tools.swarm is disabled", async () => {

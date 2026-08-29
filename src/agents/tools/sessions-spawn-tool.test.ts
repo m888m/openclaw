@@ -47,11 +47,18 @@ vi.mock("../../plugins/hook-runner-global.js", () => ({
 }));
 
 let createSessionsSpawnTool: typeof import("./sessions-spawn-tool.js").createSessionsSpawnTool;
+let createSessionsSpawnToolProduction: typeof import("./sessions-spawn-tool.js").createSessionsSpawnTool;
 let acpRuntimeRegistry: typeof import("../../acp/runtime/registry.js");
 
 describe("sessions_spawn tool", () => {
   beforeAll(async () => {
-    ({ createSessionsSpawnTool } = await import("./sessions-spawn-tool.js"));
+    ({ createSessionsSpawnTool: createSessionsSpawnToolProduction } =
+      await import("./sessions-spawn-tool.js"));
+    createSessionsSpawnTool = (options) =>
+      createSessionsSpawnToolProduction({
+        requesterSessionId: "requester-session-test",
+        ...options,
+      });
     acpRuntimeRegistry = await import("../../acp/runtime/registry.js");
   });
 
@@ -144,6 +151,20 @@ describe("sessions_spawn tool", () => {
     expect(schema.properties?.runtime?.enum).toEqual(["subagent"]);
     expect(schema.properties?.resumeSessionId).toBeUndefined();
     expect(schema.properties?.streamTo).toBeUndefined();
+  });
+
+  it("fails closed before spawning when requester incarnation is unavailable", async () => {
+    const tool = createSessionsSpawnToolProduction({ agentSessionKey: "agent:main:main" });
+    const result = await tool.execute("call-missing-requester-incarnation", {
+      task: "do not spawn",
+    });
+
+    expect(result.details).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("exact requester session incarnation"),
+    });
+    expect(hoisted.spawnSubagentDirectMock).not.toHaveBeenCalled();
+    expect(hoisted.spawnAcpDirectMock).not.toHaveBeenCalled();
   });
 
   it("advertises ACP runtime affordances when an ACP backend is loaded", () => {

@@ -214,7 +214,7 @@ describe("gateway server agent", () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatchObject({
       code: "INVALID_REQUEST",
-      message: "inputProvenance is reserved for authenticated backend handoffs.",
+      message: "inputProvenance is host-derived and cannot be supplied in agent params.",
     });
     expect(vi.mocked(agentCommand)).not.toHaveBeenCalled();
   });

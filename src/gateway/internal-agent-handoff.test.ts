@@ -177,4 +177,108 @@ describe("internal agent handoff capability", () => {
       },
     });
   });
+
+  it("rejects generated-media controls for every non-media purpose and source", () => {
+    expect(() =>
+      issue({
+        purpose: "sessions_send",
+        generatedMediaDelivery: { task: "forged", cronRunContinuation: true },
+      }),
+    ).toThrow("allowlisted agent-mediated completion");
+    expect(() =>
+      issue({
+        purpose: "agent_mediated_completion",
+        sourceTool: "agent_harness_task",
+        generatedMediaDelivery: { task: "forged", cronRunContinuation: true },
+      }),
+    ).toThrow("allowlisted agent-mediated completion");
+  });
+
+  it("derives exact generated-media client controls from the one-shot capability", async () => {
+    gatewayDispatch.mockClear();
+    const task = "deliver generated image";
+    const mediaUrls = ["/tmp/generated-image.png"];
+    const { dispatchAgentHandoffInProcess } = await import("./internal-agent-handoff.js");
+    await dispatchAgentHandoffInProcess({
+      purpose: "agent_mediated_completion",
+      sourceSessionKey: "agent:source:main",
+      sourceSessionId: "source-session-1",
+      sourceTool: "image_generate",
+      targetSessionKey: "agent:target:main",
+      targetSessionId: "target-session-1",
+      requestId: "generated-media-dispatch",
+      request: {
+        message: task,
+        sessionId: "target-session-1",
+        sourceReplyDeliveryMode: "automatic",
+        disableMessageTool: true,
+        forceRestartSafeTools: true,
+      },
+      generatedMediaDelivery: {
+        task,
+        cronRunContinuation: true,
+        mediaUrls,
+        suppressTextDelivery: true,
+      },
+    });
+
+    const [, requestValue, optionsValue] = gatewayDispatch.mock.calls[0] ?? [];
+    const request = requestValue as Record<string, unknown>;
+    const options = optionsValue as Record<string, unknown>;
+    const source = options.agentHandoffSource as {
+      sourceSessionKey: string;
+      sourceSessionId: string;
+    };
+    expect(options).toMatchObject({
+      allowSyntheticCronRunContinuation: true,
+      internalDeliveryMediaUrls: mediaUrls,
+      internalDeliverySuppressText: true,
+    });
+    const authority = consumeInternalAgentHandoffCapability({
+      capability: options.agentHandoffCapability,
+      sourceSessionKey: source.sourceSessionKey,
+      sourceSessionId: source.sourceSessionId,
+      targetSessionKey: String(request.sessionKey),
+      targetSessionId: String(request.expectedExistingSessionId),
+      requestId: String(request.idempotencyKey),
+      requestMessage: request.message,
+      cronRunContinuation: options.allowSyntheticCronRunContinuation,
+      internalDeliveryMediaUrls: options.internalDeliveryMediaUrls,
+      internalDeliverySuppressText: options.internalDeliverySuppressText,
+    });
+    expect(authority?.generatedMediaDelivery).toEqual({
+      task,
+      cronRunContinuation: true,
+      mediaUrls,
+      suppressTextDelivery: true,
+    });
+  });
+
+  it("fails before issuance when the generated-media task or lifecycle is not exact", async () => {
+    gatewayDispatch.mockClear();
+    const { dispatchAgentHandoffInProcess } = await import("./internal-agent-handoff.js");
+    const base = {
+      purpose: "agent_mediated_completion" as const,
+      sourceSessionKey: "agent:source:main",
+      sourceSessionId: "source-session-1",
+      sourceTool: "image_generate",
+      targetSessionKey: "agent:target:main",
+      targetSessionId: "target-session-1",
+      requestId: "wrong-generated-media-task",
+      request: { message: "actual task", sessionId: "target-session-1" },
+    };
+    await expect(
+      dispatchAgentHandoffInProcess({
+        ...base,
+        generatedMediaDelivery: { task: "different task", cronRunContinuation: true },
+      }),
+    ).rejects.toThrow("task does not match");
+    await expect(
+      dispatchAgentHandoffInProcess({
+        ...base,
+        generatedMediaDelivery: { task: "actual task", mediaUrls: ["/tmp/image.png"] },
+      }),
+    ).rejects.toThrow("safe delivery lifecycle");
+    expect(gatewayDispatch).not.toHaveBeenCalled();
+  });
 });

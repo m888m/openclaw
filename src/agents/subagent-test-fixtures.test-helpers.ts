@@ -93,6 +93,9 @@ export function createSubagentRunParams(
     task: overrides.runId,
     cleanup: "keep",
     ...overrides,
+    requesterSessionId:
+      overrides.requesterSessionId?.trim() ||
+      `session:${(overrides.requesterSessionKey ?? "agent:main:main").trim()}`,
   };
 }
 

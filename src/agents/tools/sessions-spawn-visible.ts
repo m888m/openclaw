@@ -51,6 +51,7 @@ export type VisibleSessionsSpawnDeps = {
 
 type VisibleSessionsSpawnOptions = VisibleSessionsSpawnDeps & {
   agentSessionKey?: string;
+  requesterSessionId?: string;
   completionOwnerKey?: string;
   agentChannel?: GatewayMessageChannel;
   agentAccountId?: string;
@@ -113,6 +114,13 @@ export async function maybeSpawnVisibleSession(params: {
       );
     }
     return undefined;
+  }
+  const requesterSessionId = params.options?.requesterSessionId?.trim();
+  if (!requesterSessionId) {
+    return {
+      status: "error",
+      error: "sessions_spawn requires an exact requester session incarnation.",
+    };
   }
   const modelOverride = normalizeToolModelOverride(readStringParam(params.raw, "model"));
   const requestedCwd = readStringParam(params.raw, "cwd");
@@ -338,6 +346,7 @@ export async function maybeSpawnVisibleSession(params: {
         childSessionKey,
         controllerSessionKey: ownership.controllerSessionKey,
         requesterSessionKey: ownership.completionRequesterSessionKey,
+        requesterSessionId,
         requesterOrigin: normalizeDeliveryContext({
           channel: params.options?.agentChannel,
           accountId: params.options?.agentAccountId,

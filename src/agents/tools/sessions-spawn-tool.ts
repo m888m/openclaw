@@ -240,6 +240,7 @@ function resolveAcpUnavailableMessage(opts?: { sandboxed?: boolean; config?: Ope
 export function createSessionsSpawnTool(
   opts?: {
     agentSessionKey?: string;
+    requesterSessionId?: string;
     requesterTurnRunId?: string;
     /** Separate key used only for completion routing (registerSubagentRun requesterSessionKey). */
     completionOwnerKey?: string;
@@ -359,6 +360,14 @@ export function createSessionsSpawnTool(
       const streamTo = runtime === "acp" && params.streamTo === "parent" ? "parent" : undefined;
       const lightContext = params.lightContext === true;
       const roleContext = requestedAgentId ? { role: requestedAgentId } : {};
+      const requesterSessionId = opts?.requesterSessionId?.trim();
+      if (!requesterSessionId) {
+        return jsonResult({
+          status: "error",
+          error: "sessions_spawn requires an exact requester session incarnation.",
+          ...roleContext,
+        });
+      }
       const visibleResult = await maybeSpawnVisibleSession({
         raw: params,
         task,
@@ -452,6 +461,7 @@ export function createSessionsSpawnTool(
           },
           {
             agentSessionKey: opts?.agentSessionKey,
+            requesterSessionId,
             requesterTurnRunId: opts?.requesterTurnRunId,
             completionOwnerKey: opts?.completionOwnerKey,
             requesterAgentIdOverride: opts?.requesterAgentIdOverride,
@@ -515,6 +525,7 @@ export function createSessionsSpawnTool(
         },
         {
           agentSessionKey: opts?.agentSessionKey,
+          requesterSessionId,
           requesterTurnRunId: opts?.requesterTurnRunId,
           completionOwnerKey: opts?.completionOwnerKey,
           agentChannel: opts?.agentChannel,

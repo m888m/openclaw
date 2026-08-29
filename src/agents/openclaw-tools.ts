@@ -665,6 +665,7 @@ export function createOpenClawTools(
       ? [
           createSessionsSpawnTool({
             agentSessionKey: options?.agentSessionKey,
+            requesterSessionId: options?.sessionId,
             requesterTurnRunId: options?.runId,
             completionOwnerKey: options?.runSessionKey,
             agentChannel: options?.agentChannel,
