@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { subagentRuns } from "../../agents/subagent-registry-memory.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
-import { issueInternalAgentHandoffCapability } from "../internal-agent-handoff.js";
+import {
+  issueInternalAgentHandoffCapability,
+  type InternalAgentHandoffPurpose,
+} from "../internal-agent-handoff.js";
 import { prepareAgentRequestPreflight } from "./agent-request-preflight.js";
 
 function runPreflight(
@@ -84,6 +87,69 @@ function runPreflight(
           internal: { syntheticClient: true },
         }
       : undefined,
+  } as never);
+  return { respond, result };
+}
+
+const handoffPurposes: readonly InternalAgentHandoffPurpose[] = [
+  "sessions_send",
+  "subagent_announce",
+  "subagent_interrupted_resume",
+  "main_session_restart_recovery",
+  "agent_mediated_completion",
+];
+
+let purposeRequestSequence = 0;
+
+function runPurposeHandoffPreflight(params: {
+  purpose: InternalAgentHandoffPurpose;
+  request?: Record<string, unknown>;
+  targetSessionKey?: string;
+  targetSessionId?: string;
+  sessionWorkAdmissionHandoffId?: string;
+  cfg?: Record<string, unknown>;
+}) {
+  purposeRequestSequence += 1;
+  const targetSessionKey = params.targetSessionKey ?? "agent:worker:subagent:purpose-target";
+  const targetSessionId = params.targetSessionId ?? "purpose-target-session-1";
+  const requestedIdempotencyKey = params.request?.idempotencyKey;
+  const idempotencyKey =
+    typeof requestedIdempotencyKey === "string" && requestedIdempotencyKey.trim()
+      ? requestedIdempotencyKey.trim()
+      : `${params.purpose}-purpose-${purposeRequestSequence}`;
+  const capability = issueInternalAgentHandoffCapability({
+    purpose: params.purpose,
+    sourceSessionKey: "agent:clawy:operator",
+    sourceSessionId: "purpose-source-session-1",
+    ...(params.purpose === "agent_mediated_completion" ? { sourceTool: "image_generate" } : {}),
+    targetSessionKey,
+    targetSessionId,
+    requestId: idempotencyKey,
+    ...(params.sessionWorkAdmissionHandoffId
+      ? { sessionWorkAdmissionHandoffId: params.sessionWorkAdmissionHandoffId }
+      : {}),
+  });
+  const respond = vi.fn();
+  const result = prepareAgentRequestPreflight({
+    params: {
+      message: "purpose-bound handoff",
+      sessionKey: targetSessionKey,
+      expectedExistingSessionId: targetSessionId,
+      idempotencyKey,
+      ...params.request,
+    },
+    respond,
+    context: { getRuntimeConfig: () => params.cfg ?? {}, dedupe: new Map() },
+    client: {
+      internal: {
+        syntheticClient: true,
+        agentHandoffCapability: capability,
+        agentHandoffSource: {
+          sourceSessionKey: "agent:clawy:operator",
+          sourceSessionId: "purpose-source-session-1",
+        },
+      },
+    },
   } as never);
   return { respond, result };
 }
@@ -461,6 +527,140 @@ describe("agent request Swarm preflight", () => {
       undefined,
       expect.objectContaining({ code: "INVALID_REQUEST" }),
     );
+  });
+
+  it.each(handoffPurposes)(
+    "keeps generic synthetic controls outside the %s capability",
+    (purpose) => {
+      const controlRequests: Array<{ label: string; request: Record<string, unknown> }> = [
+        { label: "session effects", request: { sessionEffects: "internal" } },
+        { label: "prompt suppression", request: { suppressPromptPersistence: true } },
+        {
+          label: "model override",
+          request: { provider: "local", model: "dgx-active" },
+        },
+        {
+          label: "internal runtime handoff",
+          request: { internalRuntimeHandoffId: "caller-selected-handoff" },
+        },
+        {
+          label: "exec followup",
+          request: { idempotencyKey: `exec-approval-followup:${purpose}` },
+        },
+      ];
+
+      for (const control of controlRequests) {
+        const { respond, result } = runPurposeHandoffPreflight({
+          purpose,
+          request: control.request,
+        });
+        expect(result, `${purpose} unexpectedly admitted ${control.label}`).toBeUndefined();
+        expect(respond, `${purpose} did not reject ${control.label}`).toHaveBeenCalledWith(
+          false,
+          undefined,
+          expect.objectContaining({ code: "INVALID_REQUEST" }),
+        );
+      }
+    },
+  );
+
+  it.each(handoffPurposes)(
+    "admits hidden-session effects only for an exact %s resume shape",
+    (purpose) => {
+      const { respond, result } = runPurposeHandoffPreflight({
+        purpose,
+        request: {
+          deliver: false,
+          lane: "subagent",
+          sessionEffects: "internal",
+          suppressPromptPersistence: true,
+        },
+      });
+
+      if (purpose === "subagent_interrupted_resume") {
+        expect(result).toMatchObject({
+          sessionEffects: "internal",
+          requestedPromptPersistenceSuppression: true,
+        });
+        expect(respond).not.toHaveBeenCalled();
+      } else {
+        expect(result).toBeUndefined();
+        expect(respond).toHaveBeenCalledWith(
+          false,
+          undefined,
+          expect.objectContaining({ code: "INVALID_REQUEST" }),
+        );
+      }
+    },
+  );
+
+  it.each(handoffPurposes)(
+    "admits a registered collector only for an exact %s interrupted resume",
+    (purpose) => {
+      subagentRuns.clear();
+      const childSessionKey = "agent:worker:subagent:purpose-collector";
+      const requestId = `${purpose}-collector-launch`;
+      const outputSchema = { type: "object", properties: { result: { type: "string" } } };
+      subagentRuns.set(requestId, {
+        runId: requestId,
+        childSessionKey,
+        requesterSessionKey: "agent:main:main",
+        requesterDisplayKey: "main",
+        requesterAgentId: "main",
+        task: "collect",
+        cleanup: "keep",
+        createdAt: 1,
+        collect: true,
+        outputSchema,
+        swarmLaunchIdempotencyKey: requestId,
+        swarmLaunchPending: true,
+        execution: { status: "queued" },
+      });
+
+      const { respond, result } = runPurposeHandoffPreflight({
+        purpose,
+        targetSessionKey: childSessionKey,
+        request: {
+          idempotencyKey: requestId,
+          deliver: false,
+          lane: "subagent",
+          sessionEffects: "internal",
+          suppressPromptPersistence: true,
+          swarmCollector: true,
+          swarmOutputSchema: outputSchema,
+        },
+        cfg: { tools: { swarm: true } },
+      });
+
+      if (purpose === "subagent_interrupted_resume") {
+        expect(result).toBeDefined();
+        expect(respond).not.toHaveBeenCalled();
+      } else {
+        expect(result).toBeUndefined();
+        expect(respond).toHaveBeenCalledWith(
+          false,
+          undefined,
+          expect.objectContaining({ code: "INVALID_REQUEST" }),
+        );
+      }
+    },
+  );
+
+  it("binds main restart recovery to its exact session-work handoff", () => {
+    const handoffId = "registered-recovery-handoff";
+    const { respond, result } = runPurposeHandoffPreflight({
+      purpose: "main_session_restart_recovery",
+      sessionWorkAdmissionHandoffId: handoffId,
+      request: { internalRuntimeHandoffId: handoffId },
+    });
+
+    expect(result?.expectedSession).toEqual({
+      sessionId: "purpose-target-session-1",
+      handoffId,
+    });
+    expect(result?.isRestartRecoveryResumeRun).toBe(true);
+    expect(result?.execApprovalFollowupApprovalId).toBeUndefined();
+    expect(respond).not.toHaveBeenCalled();
   });
 
   it.each([

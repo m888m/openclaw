@@ -18,6 +18,7 @@ import {
   mockMainSessionEntry,
   buildExistingMainStoreEntry,
   backendGatewayClient,
+  purposeBoundAgentHandoffClient,
   mockSessionResetSuccess,
   invokeAgent,
   describe1BeforeEach0,
@@ -2055,13 +2056,19 @@ describe("gateway agent handler chat.abort integration", () => {
         sessionId,
         expectedExistingSessionId: sessionId,
         idempotencyKey: runId,
-        inputProvenance: {
-          kind: "internal_system",
-          sourceSessionKey: sessionKey,
-          sourceTool: "main_session_restart_recovery",
-        },
       },
-      { client: backendGatewayClient(), reqId: runId, respond },
+      {
+        client: purposeBoundAgentHandoffClient({
+          purpose: "main_session_restart_recovery",
+          sourceSessionKey: sessionKey,
+          sourceSessionId: sessionId,
+          targetSessionKey: sessionKey,
+          targetSessionId: sessionId,
+          requestId: runId,
+        }),
+        reqId: runId,
+        respond,
+      },
     );
 
     expect(mocks.agentCommand).not.toHaveBeenCalled();

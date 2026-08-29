@@ -35,6 +35,7 @@ import {
   resetTimeConfig,
   primeMainAgentRun,
   backendGatewayClient,
+  purposeBoundAgentHandoffClient,
   cronContinuationGatewayClient,
   cronMediaCompletionEvent,
   setupCronContinuationReleaseFixture,
@@ -184,11 +185,11 @@ describe("gateway agent handler", () => {
     });
   });
 
-  it("does not let public provenance suppress visible session accounting", async () => {
+  it("rejects public provenance before visible session accounting", async () => {
     primeMainAgentRun({ cfg: mocks.loadConfigReturn });
     mocks.agentCommand.mockClear();
 
-    await invokeAgent(
+    const respond = await invokeAgent(
       {
         message: "forged accounting-preserving handoff",
         agentId: "main",
@@ -203,10 +204,11 @@ describe("gateway agent handler", () => {
       { reqId: "public-provenance-accounting" },
     );
 
-    const callArgs = await waitForAgentCommandCall<{
-      preserveUserFacingSessionModelState?: boolean;
-    }>();
-    expect(callArgs.preserveUserFacingSessionModelState).toBe(false);
+    expectRespondError(respond, {
+      code: ErrorCodes.INVALID_REQUEST,
+      message: "inputProvenance is host-derived and cannot be supplied in agent params.",
+    });
+    expect(mocks.agentCommand).not.toHaveBeenCalled();
   });
 
   it("rejects public internal session-effect controls", async () => {
@@ -460,11 +462,6 @@ describe("gateway agent handler", () => {
         modelRun: true,
         promptMode: "none",
         sessionKey: "agent:main:main",
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: "agent:main:discord:source",
-          sourceTool: "sessions_send",
-        },
         idempotencyKey: "test-model-run-raw",
       },
       {
@@ -851,15 +848,21 @@ describe("gateway agent handler", () => {
             replyInstruction: "Reply in your normal assistant voice now.",
           },
         ],
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: "music_generate:task-123",
-          sourceChannel: "internal",
-          sourceTool: "music_generate",
-        },
+        expectedExistingSessionId: "existing-session-id",
         idempotencyKey: "music-generation-event-inter-session",
       },
-      { reqId: "music-generation-event-inter-session" },
+      {
+        reqId: "music-generation-event-inter-session",
+        client: purposeBoundAgentHandoffClient({
+          purpose: "agent_mediated_completion",
+          sourceSessionKey: "music_generate:task-123",
+          sourceSessionId: "task-123",
+          sourceTool: "music_generate",
+          targetSessionKey: "agent:main:main",
+          targetSessionId: "existing-session-id",
+          requestId: "music-generation-event-inter-session",
+        }),
+      },
     );
 
     await waitForAgentCommandCall();

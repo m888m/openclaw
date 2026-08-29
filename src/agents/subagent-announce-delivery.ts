@@ -188,6 +188,14 @@ async function runAnnounceAgentCall(params: {
     }
     const requestId =
       typeof request.idempotencyKey === "string" ? request.idempotencyKey.trim() : "";
+    if (params.purpose === "subagent_announce") {
+      const currentSourceSessionId = loadSessionEntryByKey(
+        params.sourceSessionKey,
+      )?.sessionId?.trim();
+      if (!currentSourceSessionId || currentSourceSessionId !== params.sourceSessionId) {
+        throw new Error("subagent announce source session incarnation changed before dispatch");
+      }
+    }
     return await dispatchAgentHandoffInProcess({
       purpose: params.purpose,
       sourceSessionKey: params.sourceSessionKey,

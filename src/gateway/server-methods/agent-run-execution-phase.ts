@@ -32,7 +32,10 @@ import {
   buildRunUserTurnIdempotencyKey,
   createUserTurnTranscriptRecorder,
 } from "../../sessions/user-turn-transcript.js";
-import type { AdmittedInternalHandoff } from "../internal-agent-handoff.js";
+import {
+  closeAdmittedInternalAgentHandoff,
+  type AdmittedInternalHandoff,
+} from "../internal-agent-handoff.js";
 import { reactivateCompletedSubagentSession } from "../session-subagent-reactivation.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
@@ -404,6 +407,9 @@ export function startAgentRunExecution(params: {
             activeSessionAgentId: params.activeSessionAgentId,
           }),
           onSessionIdChanged: (sessionId) => {
+            // Compaction adopted a different session incarnation. The old
+            // handoff cannot silently follow it into a protected plugin call.
+            closeAdmittedInternalAgentHandoff(params.admittedInternalHandoff);
             if (prepared.activeRunAbort.entry) {
               prepared.activeRunAbort.entry.sessionId = sessionId;
             }

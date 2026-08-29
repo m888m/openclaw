@@ -28,6 +28,10 @@ const AGENT_MEDIATED_COMPLETION_SOURCE_TOOLS = new Set([
   "video_generate",
 ]);
 
+/** Exact installed owner/tool allowed to consume a sessions_send run authority. */
+export const INTERNAL_AGENT_HANDOFF_PROTECTED_PLUGIN_ID = "tony-postman-a2a";
+export const INTERNAL_AGENT_HANDOFF_PROTECTED_TOOL_NAME = "postman_lookup";
+
 // These declarations are exported only so generated boundary declarations can
 // name the opaque types.  The symbols have no runtime value; authority still
 // comes exclusively from the module-private WeakMaps below.
@@ -48,6 +52,7 @@ export type AdmittedInternalHandoff = Readonly<{
   readonly targetSessionKey: string;
   readonly targetSessionId: string;
   readonly requestId: string;
+  readonly sessionWorkAdmissionHandoffId?: string;
   readonly lifecycleGeneration: string;
   readonly issuedAtMs: number;
   readonly deadlineMs: number;
@@ -64,6 +69,7 @@ type IssuedHandoff = {
   readonly targetSessionKey: string;
   readonly targetSessionId: string;
   readonly requestId: string;
+  readonly sessionWorkAdmissionHandoffId?: string;
   readonly lifecycleGeneration: string;
   readonly issuedAtMs: number;
   readonly deadlineMs: number;
@@ -142,6 +148,7 @@ export function issueInternalAgentHandoffCapability(params: {
   targetSessionKey: string;
   targetSessionId: string;
   requestId: string;
+  sessionWorkAdmissionHandoffId?: string;
   deadlineMs?: number;
   lifecycleGeneration?: string;
   nowMs?: number;
@@ -153,6 +160,13 @@ export function issueInternalAgentHandoffCapability(params: {
   const targetSessionKey = normalizeRequired(params.targetSessionKey, "targetSessionKey");
   const targetSessionId = normalizeRequired(params.targetSessionId, "targetSessionId");
   const requestId = normalizeRequired(params.requestId, "requestId");
+  const sessionWorkAdmissionHandoffId = normalizeOptional(params.sessionWorkAdmissionHandoffId);
+  if (
+    sessionWorkAdmissionHandoffId &&
+    purposeProvenance.purpose !== "main_session_restart_recovery"
+  ) {
+    throw new Error("sessionWorkAdmissionHandoffId is reserved for main-session restart recovery.");
+  }
   const deadlineMs = params.deadlineMs ?? nowMs + 60_000;
   if (!Number.isFinite(deadlineMs) || deadlineMs <= nowMs) {
     throw new Error("internal agent handoff deadline must be in the future.");
@@ -169,6 +183,7 @@ export function issueInternalAgentHandoffCapability(params: {
     targetSessionKey,
     targetSessionId,
     requestId,
+    ...(sessionWorkAdmissionHandoffId ? { sessionWorkAdmissionHandoffId } : {}),
     lifecycleGeneration,
     issuedAtMs: nowMs,
     deadlineMs,
@@ -189,6 +204,7 @@ export function consumeInternalAgentHandoffCapability(params: {
   targetSessionKey: string;
   targetSessionId: string;
   requestId: string;
+  sessionWorkAdmissionHandoffId?: string;
   lifecycleGeneration?: string;
   nowMs?: number;
 }): AdmittedInternalHandoff | undefined {
@@ -212,6 +228,7 @@ export function consumeInternalAgentHandoffCapability(params: {
   const targetSessionKey = normalizeOptional(params.targetSessionKey);
   const targetSessionId = normalizeOptional(params.targetSessionId);
   const requestId = normalizeOptional(params.requestId);
+  const sessionWorkAdmissionHandoffId = normalizeOptional(params.sessionWorkAdmissionHandoffId);
   const lifecycleGeneration =
     normalizeOptional(params.lifecycleGeneration) ?? getAgentEventLifecycleGeneration();
   if (
@@ -225,6 +242,7 @@ export function consumeInternalAgentHandoffCapability(params: {
     targetSessionId !== issued.targetSessionId ||
     !requestId ||
     requestId !== issued.requestId ||
+    sessionWorkAdmissionHandoffId !== issued.sessionWorkAdmissionHandoffId ||
     lifecycleGeneration !== issued.lifecycleGeneration ||
     nowMs > issued.deadlineMs
   ) {
@@ -239,6 +257,9 @@ export function consumeInternalAgentHandoffCapability(params: {
     targetSessionKey: issued.targetSessionKey,
     targetSessionId: issued.targetSessionId,
     requestId: issued.requestId,
+    ...(issued.sessionWorkAdmissionHandoffId
+      ? { sessionWorkAdmissionHandoffId: issued.sessionWorkAdmissionHandoffId }
+      : {}),
     lifecycleGeneration: issued.lifecycleGeneration,
     issuedAtMs: issued.issuedAtMs,
     deadlineMs: issued.deadlineMs,
@@ -253,7 +274,7 @@ export function isAdmittedInternalAgentHandoff(value: unknown): value is Admitte
     return false;
   }
   const state = admittedHandoffs.get(value as object);
-  return state?.state !== "closed";
+  return state?.state === "admitted";
 }
 
 /** Consume the run authority once for one exact plugin invocation. */
@@ -290,14 +311,14 @@ export function consumeAdmittedInternalAgentHandoffForPluginTool(params: {
   const sessionKey = normalizeOptional(params.sessionKey);
   const sessionId = normalizeOptional(params.sessionId);
   if (
-    !pluginId ||
-    !toolName ||
+    pluginId !== INTERNAL_AGENT_HANDOFF_PROTECTED_PLUGIN_ID ||
+    toolName !== INTERNAL_AGENT_HANDOFF_PROTECTED_TOOL_NAME ||
     !runId ||
     !sessionKey ||
+    state.authority.purpose !== "sessions_send" ||
     runId !== state.authority.requestId ||
     sessionKey !== state.authority.targetSessionKey ||
-    (state.authority.targetSessionId !== undefined &&
-      sessionId !== state.authority.targetSessionId) ||
+    sessionId !== state.authority.targetSessionId ||
     toolCallId === undefined ||
     params.admittedSessionDeliveryKind !== "none" ||
     getAgentEventLifecycleGeneration() !== state.authority.lifecycleGeneration ||
@@ -366,6 +387,11 @@ export function prepareInternalAgentHandoffDispatch(params: InternalAgentHandoff
     targetSessionKey: params.targetSessionKey,
     targetSessionId: params.targetSessionId,
     requestId: params.requestId,
+    ...(params.purpose === "main_session_restart_recovery" &&
+    typeof params.request.internalRuntimeHandoffId === "string" &&
+    params.request.internalRuntimeHandoffId.trim()
+      ? { sessionWorkAdmissionHandoffId: params.request.internalRuntimeHandoffId.trim() }
+      : {}),
     lifecycleGeneration,
     deadlineMs: Date.now() + Math.max(5_000, params.timeoutMs ?? 10_000),
   });

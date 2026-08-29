@@ -136,7 +136,7 @@ import type {
   WorkerSshIdentityRequest as _WorkerSshIdentityRequest,
 } from "../plugins/types.js";
 import { createCachedLazyValueGetter } from "./lazy-value.js";
-export { isHostPluginToolExecutionContext } from "../plugins/plugin-tool-execution-context.js";
+export { consumeHostPluginToolExecutionContext } from "../plugins/plugin-tool-execution-context.js";
 
 // Local alias declarations keep the .d.ts bundler materializing these names in
 // this chunk; direct re-exports break rolldown-plugin-dts chunk generation.

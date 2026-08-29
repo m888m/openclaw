@@ -200,6 +200,12 @@ async function wakeSubagentRunAfterDescendants(params: {
       operation: "descendant wake agent call",
       signal: params.signal,
       run: async () => {
+        const currentChildSessionId = loadSessionEntryByKey(
+          params.childSessionKey,
+        )?.sessionId?.trim();
+        if (!currentChildSessionId || currentChildSessionId !== childSessionId) {
+          throw new Error("child source session incarnation changed before descendant wake");
+        }
         const request = {
           sessionKey: params.childSessionKey,
           message: wakeMessage,
@@ -217,10 +223,10 @@ async function wakeSubagentRunAfterDescendants(params: {
         return await dispatchAgentHandoffInProcess({
           purpose: "subagent_announce",
           sourceSessionKey: params.childSessionKey,
-          sourceSessionId: childSessionId,
+          sourceSessionId: currentChildSessionId,
           sourceChannel: INTERNAL_MESSAGE_CHANNEL,
           targetSessionKey: params.childSessionKey,
-          targetSessionId: childSessionId,
+          targetSessionId: currentChildSessionId,
           requestId: buildAnnounceIdempotencyKey(`${params.announceId}:wake`),
           request,
           delegatedToolPolicyHandoff: true,
@@ -290,6 +296,10 @@ export async function runSubagentAnnounceFlow(params: {
         ? entry.sessionId.trim()
         : undefined;
     })();
+    if (!childSessionId) {
+      shouldDeleteChildSession = false;
+      return false;
+    }
     const settleTimeoutMs = Math.min(Math.max(params.timeoutMs, 1), 120_000);
     let reply = params.roundOneReply;
     let outcome: SubagentRunOutcome | undefined = params.outcome;
@@ -509,7 +519,11 @@ export async function runSubagentAnnounceFlow(params: {
             : "finished with unknown status";
 
     const taskLabel = params.label || params.task || "task";
-    const announceSessionId = childSessionId || "unknown";
+    const announceSessionId = loadSessionEntryByKey(params.childSessionKey)?.sessionId?.trim();
+    if (!announceSessionId || announceSessionId !== childSessionId) {
+      shouldDeleteChildSession = false;
+      return false;
+    }
     const findings = childCompletionFindings || reply || "(no output)";
 
     let requesterIsSubagent = requesterIsInternalSession();

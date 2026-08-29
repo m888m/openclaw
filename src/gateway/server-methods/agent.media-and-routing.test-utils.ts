@@ -30,6 +30,7 @@ import {
   primeMainAgentRun,
   runMainAgentAndCaptureEntry,
   backendGatewayClient,
+  purposeBoundAgentHandoffClient,
   cronContinuationGatewayClient,
   cronMediaCompletionEvent,
   setupCronContinuationReleaseFixture,
@@ -428,19 +429,21 @@ describe("gateway agent handler", () => {
       {
         message: "child completed",
         sessionKey: "agent:main:main",
+        expectedExistingSessionId: "existing-session-id",
         idempotencyKey: "delegated-policy-handoff",
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: "agent:main:subagent:child",
-          sourceTool: "subagent_announce",
-        },
       },
       {
-        client: {
+        client: purposeBoundAgentHandoffClient({
+          purpose: "subagent_announce",
+          sourceSessionKey: "agent:main:subagent:child",
+          sourceSessionId: "child-session-id",
+          targetSessionKey: "agent:main:main",
+          targetSessionId: "existing-session-id",
+          requestId: "delegated-policy-handoff",
           internal: {
             delegatedToolPolicyHandoff: true,
           },
-        } as never,
+        }),
       },
     );
 
@@ -1272,14 +1275,20 @@ describe("gateway agent handler", () => {
         message: "forwarded reply",
         agentId: "main",
         sessionKey: "agent:main:main",
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: "agent:main:discord:source",
-          sourceTool: "sessions_send",
-        },
+        expectedExistingSessionId: "existing-session-id",
         idempotencyKey: "test-inter-session-marker",
       },
-      { reqId: "inter-session-marker" },
+      {
+        reqId: "inter-session-marker",
+        client: purposeBoundAgentHandoffClient({
+          purpose: "sessions_send",
+          sourceSessionKey: "agent:main:discord:source",
+          sourceSessionId: "source-session-id",
+          targetSessionKey: "agent:main:main",
+          targetSessionId: "existing-session-id",
+          requestId: "test-inter-session-marker",
+        }),
+      },
     );
 
     const callArgs = await waitForAgentCommandCall<
@@ -1316,11 +1325,7 @@ describe("gateway agent handler", () => {
         message: "runtime-only announce bookkeeping",
         agentId: "main",
         sessionKey: "agent:main:main",
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: "agent:main:subagent:child",
-          sourceTool: "subagent_announce",
-        },
+        expectedExistingSessionId: "existing-session-id",
         internalEvents: [
           {
             type: "task_completion",
@@ -1340,7 +1345,14 @@ describe("gateway agent handler", () => {
       },
       {
         reqId: "subagent-announce-suppress-prompt",
-        client: backendGatewayClient(),
+        client: purposeBoundAgentHandoffClient({
+          purpose: "subagent_announce",
+          sourceSessionKey: "agent:main:subagent:child",
+          sourceSessionId: "child-session-id",
+          targetSessionKey: "agent:main:main",
+          targetSessionId: "existing-session-id",
+          requestId: "test-subagent-announce-suppress-prompt",
+        }),
       },
     );
 
@@ -1350,7 +1362,7 @@ describe("gateway agent handler", () => {
       message?: string;
     }>();
     expect(callArgs.suppressPromptPersistence).toBe(true);
-    expect(callArgs.preserveUserFacingSessionModelState).toBe(true);
+    expect(callArgs.preserveUserFacingSessionModelState).toBe(false);
     expect(callArgs.message).toMatch(/^\[Inter-session message\]/);
     expect(callArgs.message).toContain("sourceTool=subagent_announce");
   });

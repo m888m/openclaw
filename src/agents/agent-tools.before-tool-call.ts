@@ -1996,6 +1996,7 @@ export function wrapToolWithBeforeToolCallHook(
       }
       const startedAt = Date.now();
       let executionContext: unknown;
+      let closeExecutionContextOnAbort: (() => void) | undefined;
       try {
         const pluginMeta = getPluginToolMeta(tool);
         const pluginTool = pluginMeta !== undefined;
@@ -2020,6 +2021,18 @@ export function wrapToolWithBeforeToolCallHook(
         if (pluginTool && ctx?.admittedInternalHandoff && !executionContext) {
           throw new Error("plugin tool execution context is not valid for this admitted handoff");
         }
+        if (executionContext && signal) {
+          closeExecutionContextOnAbort = () => {
+            closeHostPluginToolExecutionContext(executionContext);
+          };
+          signal.addEventListener("abort", closeExecutionContextOnAbort, { once: true });
+          if (signal.aborted) {
+            closeExecutionContextOnAbort();
+          }
+        }
+        // Close is now wired before the handler boundary; this second check
+        // seals the race between final params/context creation and invocation.
+        signal?.throwIfAborted();
         const result = await execute(toolCallId, executeParams, signal, onUpdate, executionContext);
         const durationMs = Date.now() - startedAt;
         const terminalPresentation = resolveToolTerminalPresentation({
@@ -2096,6 +2109,9 @@ export function wrapToolWithBeforeToolCallHook(
         });
         throw err;
       } finally {
+        if (signal && closeExecutionContextOnAbort) {
+          signal.removeEventListener("abort", closeExecutionContextOnAbort);
+        }
         closeHostPluginToolExecutionContext(executionContext);
       }
     },

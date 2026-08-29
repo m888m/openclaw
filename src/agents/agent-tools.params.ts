@@ -1,4 +1,4 @@
-import { isHostPluginToolExecutionContext } from "../plugins/plugin-tool-execution-context.js";
+import { isIssuedHostPluginToolExecutionContext } from "../plugins/plugin-tool-execution-context.js";
 /**
  * Shared validation for model-supplied tool parameters.
  * Converts malformed file-tool arguments into retryable errors and fixes the
@@ -245,7 +245,7 @@ export function wrapToolParamValidation(
         normalizedParams,
         signal,
         onUpdate,
-        isHostPluginToolExecutionContext(executionContext) &&
+        isIssuedHostPluginToolExecutionContext(executionContext) &&
           executionContext.canonicalParams === normalizedParams
           ? executionContext
           : undefined,

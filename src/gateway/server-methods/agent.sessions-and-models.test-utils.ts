@@ -19,6 +19,10 @@ import {
   setDetachedTaskLifecycleRuntime,
 } from "../../tasks/task-runtime.test-helpers.js";
 import { withTempDir } from "../../test-helpers/temp-dir.js";
+import {
+  isAdmittedInternalAgentHandoff,
+  issueInternalAgentHandoffCapability,
+} from "../internal-agent-handoff.js";
 import { dispatchAgentRunFromGateway } from "./agent-run-dispatch.js";
 import {
   applyGatewaySubagentRegistryTestDeps,
@@ -1722,6 +1726,62 @@ describe("gateway agent handler", () => {
     );
 
     expect(trackedSessionId).toBe("rotated-session-id");
+  });
+
+  it("closes an admitted handoff when compaction rotates the target incarnation", async () => {
+    const sourceSessionKey = "agent:main:sessions-send-source";
+    const sourceSessionId = "sessions-send-source-id";
+    const targetSessionKey = "agent:main:main";
+    const targetSessionId = "existing-session-id";
+    const requestId = "agent-handoff-session-rotation";
+    primeMainAgentRun({ sessionId: targetSessionId });
+    const capability = issueInternalAgentHandoffCapability({
+      purpose: "sessions_send",
+      sourceSessionKey,
+      sourceSessionId,
+      targetSessionKey,
+      targetSessionId,
+      requestId,
+    });
+    let admittedHandoff: unknown;
+    mocks.agentCommand.mockImplementation(async (call: AgentCommandCall) => {
+      admittedHandoff = call.admittedInternalHandoff;
+      expect(isAdmittedInternalAgentHandoff(admittedHandoff)).toBe(true);
+      const onSessionIdChanged = call.onSessionIdChanged;
+      if (typeof onSessionIdChanged !== "function") {
+        throw new Error("expected session id change callback");
+      }
+      onSessionIdChanged("rotated-session-id");
+      expect(isAdmittedInternalAgentHandoff(admittedHandoff)).toBe(false);
+      return {
+        payloads: [{ text: "ok" }],
+        meta: { durationMs: 100 },
+      };
+    });
+
+    await invokeAgent(
+      {
+        message: "protected work before compaction",
+        agentId: "main",
+        sessionKey: targetSessionKey,
+        expectedExistingSessionId: targetSessionId,
+        idempotencyKey: requestId,
+      },
+      {
+        reqId: requestId,
+        context: makeContext(),
+        client: {
+          internal: {
+            syntheticClient: true,
+            agentHandoffCapability: capability,
+            agentHandoffSource: { sourceSessionKey, sourceSessionId },
+          },
+        } as never,
+      },
+    );
+
+    expect(admittedHandoff).toBeDefined();
+    expect(isAdmittedInternalAgentHandoff(admittedHandoff)).toBe(false);
   });
 
   it("honors selected-global agent id when the request uses the main alias", async () => {

@@ -9,6 +9,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayClientRequestError } from "../gateway/client.js";
 import {
+  consumeInternalAgentHandoffCapability,
+  issueInternalAgentHandoffCapability,
+} from "../gateway/internal-agent-handoff.js";
+import { getAgentEventLifecycleGeneration } from "../infra/agent-events.js";
+import {
   onInternalDiagnosticEvent,
   onDiagnosticEvent,
   onTrustedInternalDiagnosticEvent,
@@ -25,6 +30,10 @@ import {
 } from "../plugins/hook-before-tool-call-result.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { createHookRunner, type HookRunner } from "../plugins/hooks.js";
+import {
+  consumeHostPluginToolExecutionContext,
+  isIssuedHostPluginToolExecutionContext,
+} from "../plugins/plugin-tool-execution-context.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { setPluginToolMeta } from "../plugins/tools.js";
@@ -2785,5 +2794,190 @@ describe("before_tool_call tool content private-data capture", () => {
       expect(errored?.privateData.toolContent?.toolOutput).toBeUndefined();
     });
   });
+});
+
+describe("protected plugin execution-context lifecycle", () => {
+  const pluginId = "tony-postman-a2a";
+  const toolName = "postman_lookup";
+  const targetSessionKey = "agent:postman:tony-email-lookup";
+  const targetSessionId = "postman-session-1";
+
+  function admit(runId: string) {
+    const lifecycleGeneration = getAgentEventLifecycleGeneration();
+    const capability = issueInternalAgentHandoffCapability({
+      sourceSessionKey: "agent:clawy:operator",
+      sourceSessionId: "clawy-session-1",
+      targetSessionKey,
+      targetSessionId,
+      requestId: runId,
+      lifecycleGeneration,
+    });
+    const authority = consumeInternalAgentHandoffCapability({
+      capability,
+      sourceSessionKey: "agent:clawy:operator",
+      sourceSessionId: "clawy-session-1",
+      targetSessionKey,
+      targetSessionId,
+      requestId: runId,
+      lifecycleGeneration,
+    });
+    if (!authority) {
+      throw new Error("expected admitted plugin handoff");
+    }
+    return authority;
+  }
+
+  function wrapProtectedTool(runId: string, execute: ReturnType<typeof vi.fn>) {
+    const authority = admit(runId);
+    const rawTool = asAgentTool({ name: toolName, execute });
+    setPluginToolMeta(rawTool, { pluginId, optional: false });
+    return wrapToolWithBeforeToolCallHook(rawTool, {
+      agentId: "postman",
+      sessionKey: targetSessionKey,
+      sessionId: targetSessionId,
+      runId,
+      modelProviderId: "local",
+      modelId: "dgx-active",
+      inputProvenance: authority.provenance,
+      admittedSessionDeliveryKind: "none",
+      admittedInternalHandoff: authority,
+      loopDetection: { enabled: false },
+    });
+  }
+
+  function consumeAtHandlerEntry(
+    executionContext: unknown,
+    toolCallId: string,
+    params: unknown,
+  ): boolean {
+    return consumeHostPluginToolExecutionContext(executionContext, {
+      pluginId,
+      toolName,
+      toolCallId,
+      canonicalParams: params,
+    });
+  }
+
+  it("passes the identical final frozen params into one atomic handler entry", async () => {
+    let retainedContext: unknown;
+    const admissions: boolean[] = [];
+    const execute = vi.fn(
+      async (
+        toolCallId: string,
+        params: unknown,
+        _signal?: AbortSignal,
+        _onUpdate?: unknown,
+        executionContext?: unknown,
+      ) => {
+        retainedContext = executionContext;
+        admissions.push(consumeAtHandlerEntry(executionContext, toolCallId, params));
+        admissions.push(consumeAtHandlerEntry(executionContext, toolCallId, params));
+        return { content: [{ type: "text", text: "ok" }] };
+      },
+    );
+    const tool = wrapProtectedTool("plugin-wrapper-complete", execute);
+    const params = { nested: { value: "final" } };
+
+    await tool.execute("tool-call-complete", params);
+
+    expect(admissions).toEqual([true, false]);
+    expect(Object.isFrozen(params)).toBe(true);
+    expect(Object.isFrozen(params.nested)).toBe(true);
+    expect(consumeAtHandlerEntry(retainedContext, "tool-call-complete", params)).toBe(false);
+  });
+
+  it("raw and wrapper-disabled calls cannot mint a consumable context", async () => {
+    const execute = vi.fn(
+      async (
+        toolCallId: string,
+        params: unknown,
+        _signal?: AbortSignal,
+        _onUpdate?: unknown,
+        executionContext?: unknown,
+      ) => ({
+        content: [
+          {
+            type: "text",
+            text: String(consumeAtHandlerEntry(executionContext, toolCallId, params)),
+          },
+        ],
+      }),
+    );
+    const rawTool = asAgentTool({ name: toolName, execute });
+    setPluginToolMeta(rawTool, { pluginId, optional: false });
+
+    await expect(rawTool.execute("raw-call", {})).resolves.toMatchObject({
+      content: [{ text: "false" }],
+    });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it("closes retained context when the handler throws", async () => {
+    let retainedContext: unknown;
+    let retainedParams: unknown;
+    const execute = vi.fn(
+      async (
+        toolCallId: string,
+        params: unknown,
+        _signal?: AbortSignal,
+        _onUpdate?: unknown,
+        executionContext?: unknown,
+      ) => {
+        retainedContext = executionContext;
+        retainedParams = params;
+        expect(consumeAtHandlerEntry(executionContext, toolCallId, params)).toBe(true);
+        throw new Error("plugin failed");
+      },
+    );
+    const tool = wrapProtectedTool("plugin-wrapper-throw", execute);
+
+    await expect(tool.execute("tool-call-throw", {})).rejects.toThrow("plugin failed");
+    expect(consumeAtHandlerEntry(retainedContext, "tool-call-throw", retainedParams)).toBe(false);
+  });
+
+  it.each(["abort", "timeout"] as const)(
+    "closes before a never-settling handler observes a later %s",
+    async (mode) => {
+      let retainedContext: unknown;
+      let retainedParams: unknown;
+      let markStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const execute = vi.fn(
+        async (
+          _toolCallId: string,
+          params: unknown,
+          _signal?: AbortSignal,
+          _onUpdate?: unknown,
+          executionContext?: unknown,
+        ) => {
+          retainedContext = executionContext;
+          retainedParams = params;
+          markStarted?.();
+          return await new Promise<never>(() => {});
+        },
+      );
+      const tool = wrapProtectedTool(`plugin-wrapper-${mode}`, execute);
+      const controller = mode === "abort" ? new AbortController() : undefined;
+      const signal = controller?.signal ?? AbortSignal.timeout(5);
+
+      const pending = tool.execute(`tool-call-${mode}`, {}, signal);
+      await started;
+      expect(isIssuedHostPluginToolExecutionContext(retainedContext)).toBe(true);
+      if (controller) {
+        controller.abort();
+      } else if (!signal.aborted) {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      }
+
+      expect(consumeAtHandlerEntry(retainedContext, `tool-call-${mode}`, retainedParams)).toBe(
+        false,
+      );
+      void pending;
+    },
+  );
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

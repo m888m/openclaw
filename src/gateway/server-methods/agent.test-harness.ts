@@ -17,6 +17,10 @@ import {
   resetTaskRegistryForTests,
 } from "../../tasks/task-runtime.test-helpers.js";
 import { captureEnv, setTestEnvValue } from "../../test-utils/env.js";
+import {
+  issueInternalAgentHandoffCapability,
+  type InternalAgentHandoffPurpose,
+} from "../internal-agent-handoff.js";
 import { createChatRunState } from "../server-chat-state.js";
 import { agentHandlers } from "./agent.js";
 import { suspendHandlers } from "./suspend.js";
@@ -695,6 +699,42 @@ export function backendGatewayClient(): AgentHandlerArgs["client"] {
       scopes: ["operator.write"],
     },
     internal: { syntheticClient: true },
+  } as AgentHandlerArgs["client"];
+}
+
+export function purposeBoundAgentHandoffClient(params: {
+  purpose: InternalAgentHandoffPurpose;
+  sourceSessionKey: string;
+  sourceSessionId: string;
+  targetSessionKey: string;
+  targetSessionId: string;
+  requestId: string;
+  sourceTool?: string;
+  sessionWorkAdmissionHandoffId?: string;
+  internal?: Record<string, unknown>;
+}): AgentHandlerArgs["client"] {
+  const capability = issueInternalAgentHandoffCapability({
+    purpose: params.purpose,
+    sourceSessionKey: params.sourceSessionKey,
+    sourceSessionId: params.sourceSessionId,
+    targetSessionKey: params.targetSessionKey,
+    targetSessionId: params.targetSessionId,
+    requestId: params.requestId,
+    ...(params.sourceTool ? { sourceTool: params.sourceTool } : {}),
+    ...(params.sessionWorkAdmissionHandoffId
+      ? { sessionWorkAdmissionHandoffId: params.sessionWorkAdmissionHandoffId }
+      : {}),
+  });
+  return {
+    internal: {
+      syntheticClient: true,
+      ...params.internal,
+      agentHandoffCapability: capability,
+      agentHandoffSource: {
+        sourceSessionKey: params.sourceSessionKey,
+        sourceSessionId: params.sourceSessionId,
+      },
+    },
   } as AgentHandlerArgs["client"];
 }
 

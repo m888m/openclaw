@@ -90,7 +90,7 @@ describe("internal agent handoff capability", () => {
     expect(
       consumeAdmittedInternalAgentHandoffForPluginTool({
         authority,
-        pluginId: "postman",
+        pluginId: "tony-postman-a2a",
         toolName: "postman_lookup",
         toolCallId: "call-1",
         runId: "plugin-run",
@@ -103,7 +103,7 @@ describe("internal agent handoff capability", () => {
     expect(
       consumeAdmittedInternalAgentHandoffForPluginTool({
         authority,
-        pluginId: "postman",
+        pluginId: "tony-postman-a2a",
         toolName: "postman_lookup",
         toolCallId: "call-1",
         runId: "plugin-run",

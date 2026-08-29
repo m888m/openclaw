@@ -2269,12 +2269,20 @@ describe("resolvePluginTools optional tools", () => {
 
   it("caches plugin tool descriptors and uses the runtime only on execution", async () => {
     const outputSchema = { type: "object", properties: { ok: { type: "boolean" } } };
+    const observedInvocations: Array<{ params: unknown; executionContext: unknown }> = [];
     const factory = vi.fn((rawCtx: unknown) => {
       const ctx = rawCtx as { sessionId?: string };
       return {
         ...makeTool("cached_tool"),
         outputSchema,
-        async execute() {
+        async execute(
+          _toolCallId: string,
+          params: unknown,
+          _signal?: AbortSignal,
+          _onUpdate?: unknown,
+          executionContext?: unknown,
+        ) {
+          observedInvocations.push({ params, executionContext });
           return { content: [{ type: "text", text: ctx.sessionId ?? "missing" }] };
         },
       };
@@ -2308,10 +2316,15 @@ describe("resolvePluginTools optional tools", () => {
     expect(second[0]?.outputSchema).toBe(outputSchema);
     expect(loadOpenClawPluginsMock).not.toHaveBeenCalled();
 
-    await expect(second[0]?.execute("call", {}, undefined)).resolves.toEqual({
+    const canonicalParams = {};
+    const executionContext = Object.freeze({ opaque: "host-context" });
+    await expect(
+      second[0]?.execute("call", canonicalParams, undefined, undefined, executionContext as never),
+    ).resolves.toEqual({
       content: [{ type: "text", text: "same" }],
     });
     expect(factory).toHaveBeenCalledTimes(2);
+    expect(observedInvocations).toEqual([{ params: canonicalParams, executionContext }]);
   });
 
   it("executes cached healthy tools when a runtime sibling is malformed", async () => {

@@ -1,14 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   consumeInternalAgentHandoffCapability,
   issueInternalAgentHandoffCapability,
 } from "../gateway/internal-agent-handoff.js";
-import { getAgentEventLifecycleGeneration } from "../infra/agent-events.js";
+import {
+  getAgentEventLifecycleGeneration,
+  resetAgentEventsForTest,
+  rotateAgentEventLifecycleGeneration,
+} from "../infra/agent-events.js";
 import {
   closeHostPluginToolExecutionContext,
+  consumeHostPluginToolExecutionContext,
   createHostPluginToolExecutionContext,
-  isHostPluginToolExecutionContext,
+  isIssuedHostPluginToolExecutionContext,
+  type PluginToolExecutionContext,
 } from "./plugin-tool-execution-context.js";
+
+const PLUGIN_ID = "tony-postman-a2a";
+const TOOL_NAME = "postman_lookup";
 
 function admit(requestId: string) {
   const targetSessionKey = "agent:postman:tony-email-lookup";
@@ -43,7 +52,7 @@ function contextFor(
   overrides: Partial<Parameters<typeof createHostPluginToolExecutionContext>[0]> = {},
 ) {
   return createHostPluginToolExecutionContext({
-    pluginId: "tony-postman-a2a",
+    pluginId: PLUGIN_ID,
     agentId: "postman",
     sessionKey: authority.targetSessionKey,
     sessionId: authority.targetSessionId,
@@ -53,57 +62,142 @@ function contextFor(
     inputProvenance: authority.provenance,
     admittedSessionDeliveryKind: "none",
     admittedInternalHandoff: authority,
-    toolName: "postman_lookup",
+    toolName: TOOL_NAME,
     toolCallId: "tool-call-1",
     canonicalParams,
     ...overrides,
   });
 }
 
+function consume(
+  context: PluginToolExecutionContext | undefined,
+  overrides: Partial<Parameters<typeof consumeHostPluginToolExecutionContext>[1]> = {},
+) {
+  return consumeHostPluginToolExecutionContext(context, {
+    pluginId: PLUGIN_ID,
+    toolName: TOOL_NAME,
+    toolCallId: "tool-call-1",
+    canonicalParams: context?.canonicalParams,
+    ...overrides,
+  });
+}
+
 describe("host plugin tool execution context", () => {
-  it("is branded, deeply frozen, identity-bound, and closes after one invocation", () => {
+  beforeEach(() => {
+    resetAgentEventsForTest();
+  });
+
+  it("atomically consumes one exact deeply frozen host invocation", () => {
     const authority = admit("run-1");
     const params: Record<string, unknown> = { nested: { value: "immutable" } };
     const context = contextFor(authority, params);
 
     expect(context).toBeDefined();
-    expect(isHostPluginToolExecutionContext(context)).toBe(true);
+    expect(isIssuedHostPluginToolExecutionContext(context)).toBe(true);
     expect(context?.canonicalParams).toBe(params);
     expect(Object.isFrozen(params)).toBe(true);
     expect(Object.isFrozen(params.nested)).toBe(true);
-    expect(isHostPluginToolExecutionContext({ ...context })).toBe(false);
     expect(
-      isHostPluginToolExecutionContext({
-        ...context,
-        canonicalParams: Object.freeze({ nested: { value: "immutable" } }),
-      }),
+      consumeHostPluginToolExecutionContext(
+        { ...context },
+        {
+          pluginId: PLUGIN_ID,
+          toolName: TOOL_NAME,
+          toolCallId: "tool-call-1",
+          canonicalParams: params,
+        },
+      ),
     ).toBe(false);
 
-    closeHostPluginToolExecutionContext(context);
-    expect(isHostPluginToolExecutionContext(context)).toBe(false);
-    expect(contextFor(authority)).toBeUndefined();
+    expect(consume(context)).toBe(true);
+    expect(consume(context)).toBe(false);
+    expect(isIssuedHostPluginToolExecutionContext(context)).toBe(false);
   });
 
-  it("requires the exact admitted provenance and explicit route-null snapshot", () => {
-    const authority = admit("run-2");
+  it("allows exactly one winner under concurrent consumption", async () => {
+    const context = contextFor(admit("run-concurrent"));
+    const results = await Promise.all([
+      Promise.resolve().then(() => consume(context)),
+      Promise.resolve().then(() => consume(context)),
+      Promise.resolve().then(() => consume(context)),
+    ]);
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it.each([
+    ["owner", { pluginId: "other-plugin" }],
+    ["tool", { toolName: "same_name_other_tool" }],
+    ["call", { toolCallId: "other-call" }],
+    ["params", { canonicalParams: Object.freeze({}) }],
+  ] as const)("burns the context before a wrong %s binding check", (_label, override) => {
+    const context = contextFor(admit(`run-wrong-${_label}`));
+
+    expect(consume(context, override)).toBe(false);
+    expect(consume(context)).toBe(false);
+  });
+
+  it("prebinds the protected plugin owner and tool", () => {
+    const wrongOwnerAuthority = admit("run-wrong-owner-context");
+    expect(contextFor(wrongOwnerAuthority, {}, { pluginId: "other-plugin" })).toBeUndefined();
+
+    const wrongToolAuthority = admit("run-wrong-tool-context");
+    expect(contextFor(wrongToolAuthority, {}, { toolName: "postman_lookup_copy" })).toBeUndefined();
+  });
+
+  it("requires exact provenance, run, session incarnation, and explicit route-none", () => {
+    const provenanceAuthority = admit("run-provenance");
     expect(
       contextFor(
-        authority,
+        provenanceAuthority,
         {},
-        {
-          inputProvenance: { ...authority.provenance },
-        },
+        { inputProvenance: { ...provenanceAuthority.provenance } },
       ),
     ).toBeUndefined();
 
-    const missingRouteAuthority = admit("run-3");
-    expect(
-      contextFor(missingRouteAuthority, {}, { admittedSessionDeliveryKind: undefined }),
-    ).toBeUndefined();
+    const wrongRun = contextFor(admit("run-wrong-run"), {}, { runId: "other-run" });
+    expect(consume(wrongRun)).toBe(false);
 
-    const nonNullRouteAuthority = admit("run-4");
-    expect(
-      contextFor(nonNullRouteAuthority, {}, { admittedSessionDeliveryKind: "internal" }),
-    ).toBeUndefined();
+    const wrongSession = contextFor(admit("run-wrong-session"), {}, { sessionId: "rotated" });
+    expect(consume(wrongSession)).toBe(false);
+
+    const missingRoute = contextFor(
+      admit("run-missing-route"),
+      {},
+      {
+        admittedSessionDeliveryKind: undefined,
+      },
+    );
+    expect(missingRoute).toBeDefined();
+    expect(consume(missingRoute)).toBe(false);
+
+    for (const route of ["internal", "external"] as const) {
+      const context = contextFor(
+        admit(`run-${route}-route`),
+        {},
+        {
+          admittedSessionDeliveryKind: route,
+        },
+      );
+      expect(consume(context)).toBe(false);
+    }
+  });
+
+  it("rechecks lifecycle generation at handler entry and closes on mismatch", () => {
+    const context = contextFor(admit("run-lifecycle-rotation"));
+    rotateAgentEventLifecycleGeneration();
+
+    expect(consume(context)).toBe(false);
+    expect(consume(context)).toBe(false);
+  });
+
+  it("closes both invocation and admitted authority on every host close path", () => {
+    const authority = admit("run-close");
+    const context = contextFor(authority);
+
+    closeHostPluginToolExecutionContext(context);
+
+    expect(consume(context)).toBe(false);
+    expect(contextFor(authority)).toBeUndefined();
   });
 });

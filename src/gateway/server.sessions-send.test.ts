@@ -35,13 +35,37 @@ let envSnapshot: ReturnType<typeof captureEnv>;
 
 type SessionSendTool = ReturnType<typeof createOpenClawTools>[number];
 const SESSION_SEND_E2E_TIMEOUT_MS = 10_000;
+const REQUESTER_SESSION_KEY = "agent:main:sessions-send-test-requester";
 let cachedSessionsSendTool: SessionSendTool | null = null;
 
-function getSessionsSendTool(): SessionSendTool {
+async function getSessionsSendTool(): Promise<SessionSendTool> {
   if (cachedSessionsSendTool) {
     return cachedSessionsSendTool;
   }
-  const tool = createOpenClawTools().find((candidate) => candidate.name === "sessions_send");
+  const { callGateway } = await import("./call.js");
+  await callGateway({
+    method: "sessions.patch",
+    params: { key: REQUESTER_SESSION_KEY, label: "sessions-send-test-requester" },
+    timeoutMs: 5_000,
+  });
+  await callGateway({
+    method: "sessions.patch",
+    params: { key: "agent:main:main", label: "sessions-send-test-main" },
+    timeoutMs: 5_000,
+  });
+  const requesterEntry = loadSessionEntry({
+    sessionKey: REQUESTER_SESSION_KEY,
+    ...(testState.sessionStorePath ? { storePath: testState.sessionStorePath } : {}),
+  });
+  const requesterSessionId = requesterEntry?.sessionId?.trim();
+  if (!requesterSessionId) {
+    throw new Error("missing host-derived requester session incarnation");
+  }
+  const tool = createOpenClawTools({
+    agentSessionKey: REQUESTER_SESSION_KEY,
+    sessionId: requesterSessionId,
+    config: { tools: { sessions: { visibility: "all" } } },
+  }).find((candidate) => candidate.name === "sessions_send");
   if (!tool) {
     throw new Error("missing sessions_send tool");
   }
@@ -57,10 +81,13 @@ function expectSessionsSendDetails(
     status?: string;
     reply?: string;
     sessionKey?: string;
+    error?: string;
   };
-  expect(details.status).toBe("ok");
-  expect(details.reply).toBe(expected.reply);
-  expect(details.sessionKey).toBe(expected.sessionKey);
+  expect(details, JSON.stringify(details)).toMatchObject({
+    status: "ok",
+    reply: expected.reply,
+    sessionKey: expected.sessionKey,
+  });
 }
 
 async function emitLifecycleAssistantReply(params: {
@@ -151,6 +178,24 @@ afterAll(async () => {
 });
 
 describe("sessions_send gateway loopback", () => {
+  it("rejects a production tool call without a host-derived requester identity", async () => {
+    const tool = createOpenClawTools().find((candidate) => candidate.name === "sessions_send");
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-without-requester", {
+      sessionKey: "agent:main:main",
+      message: "must fail closed",
+      timeoutSeconds: 5,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "error",
+      error: "Host-derived source session identity is required",
+    });
+  });
+
   it("returns reply when lifecycle ends before agent.wait", async () => {
     const spy = agentCommand as unknown as Mock<(opts: unknown) => Promise<void>>;
     spy.mockImplementation(async (opts: unknown) =>
@@ -170,14 +215,14 @@ describe("sessions_send gateway loopback", () => {
       }),
     );
 
-    const tool = getSessionsSendTool();
+    const tool = await getSessionsSendTool();
 
     const result = await tool.execute("call-loopback", {
-      sessionKey: "main",
+      sessionKey: "agent:main:main",
       message: "ping",
       timeoutSeconds: 5,
     });
-    expectSessionsSendDetails(result, { reply: "pong", sessionKey: "main" });
+    expectSessionsSendDetails(result, { reply: "pong", sessionKey: "agent:main:main" });
 
     const firstCall = spy.mock.calls.at(0)?.[0] as
       | { lane?: string; inputProvenance?: { kind?: string; sourceTool?: string } }
@@ -236,6 +281,10 @@ describe("sessions_send gateway loopback", () => {
       try {
         await writeSessionStore({
           entries: {
+            [REQUESTER_SESSION_KEY]: {
+              sessionId: "sess-sessions-send-requester",
+              updatedAt: Date.now(),
+            },
             "agent:main:whatsapp:direct:peer-1": {
               sessionId: "sess-whatsapp-peer",
               updatedAt: Date.now(),
@@ -273,6 +322,7 @@ describe("sessions_send gateway loopback", () => {
           announceTimeoutMs: 5_000,
           maxPingPongTurns: 0,
           roundOneReply: "target response",
+          requesterSessionKey: REQUESTER_SESSION_KEY,
         });
 
         await vi.waitFor(
@@ -471,6 +521,27 @@ describe("sessions_send gateway loopback", () => {
       }
     },
   );
+
+  it("fails closed before a standalone announce without a host requester", async () => {
+    const agentStep = vi.fn(async () => ({
+      payloads: [{ text: "must not run", mediaUrl: null }],
+      meta: { durationMs: 1 },
+    }));
+    agentStepTesting.setDepsForTest({ agentCommandFromIngress: agentStep });
+    try {
+      await runSessionsSendA2AFlow({
+        targetSessionKey: "agent:main:main",
+        displayKey: "agent:main:main",
+        message: "standalone ping",
+        announceTimeoutMs: 5_000,
+        maxPingPongTurns: 0,
+        roundOneReply: "standalone response",
+      });
+      expect(agentStep).not.toHaveBeenCalled();
+    } finally {
+      agentStepTesting.setDepsForTest();
+    }
+  });
 });
 
 describe("sessions_send label lookup", () => {
@@ -507,18 +578,7 @@ describe("sessions_send label lookup", () => {
         timeoutMs: 5000,
       });
 
-      const tool = createOpenClawTools({
-        config: {
-          tools: {
-            sessions: {
-              visibility: "all",
-            },
-          },
-        },
-      }).find((candidate) => candidate.name === "sessions_send");
-      if (!tool) {
-        throw new Error("missing sessions_send tool");
-      }
+      const tool = await getSessionsSendTool();
 
       // Send using label instead of sessionKey
       const result = await tool.execute("call-by-label", {

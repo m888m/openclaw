@@ -104,6 +104,7 @@ export function prepareAgentRequestPreflight(
           targetSessionKey: requestedSessionKey,
           targetSessionId,
           requestId: request.idempotencyKey,
+          sessionWorkAdmissionHandoffId: request.internalRuntimeHandoffId,
           lifecycleGeneration,
         })
       : undefined
@@ -134,11 +135,23 @@ export function prepareAgentRequestPreflight(
     return undefined;
   }
   const hasLegacyInternalRuntimeControls = resolveCanUseInternalRuntimeControls(params.client);
-  // A sessions_send dispatcher deliberately uses a synthetic client for the
-  // in-process route. Possessing that one-call capability must still suppress
-  // every broad synthetic/runtime privilege.
+  // Capability-bearing requests never inherit the generic synthetic/runtime
+  // bundle. Main restart recovery gets only its exact recovery-state seam;
+  // subagent resume controls are admitted separately below.
   const canUseInternalRuntimeHandoff =
-    hasLegacyInternalRuntimeControls && admittedInternalHandoff?.purpose !== "sessions_send";
+    admittedInternalHandoff?.purpose === "main_session_restart_recovery" ||
+    (hasLegacyInternalRuntimeControls && !admittedInternalHandoff);
+  const requestedPromptPersistenceSuppression = request.suppressPromptPersistence === true;
+  const requestedInternalSessionEffects = request.sessionEffects === "internal";
+  const exactSubagentInterruptedResumeControls =
+    admittedInternalHandoff?.purpose === "subagent_interrupted_resume" &&
+    request.lane === "subagent" &&
+    request.deliver === false &&
+    requestedInternalSessionEffects &&
+    requestedPromptPersistenceSuppression;
+  const canUseCollectorControls =
+    exactSubagentInterruptedResumeControls ||
+    (hasLegacyInternalRuntimeControls && !admittedInternalHandoff);
   const requestSessionKey = request.sessionKey?.trim();
   const collectorSession = findSwarmCollectorSession(requestSessionKey);
   // Collector children always use subagent session keys, so ordinary traffic
@@ -197,7 +210,7 @@ export function prepareAgentRequestPreflight(
       typeof registeredCollector.endedAt !== "number";
     if (
       (!swarmEnabled && !collectorDedupe) ||
-      !canUseInternalRuntimeHandoff ||
+      !canUseCollectorControls ||
       request.lane !== "subagent" ||
       !registeredCollector ||
       (!pendingCollectorLaunch && !collectorDedupe)
@@ -232,7 +245,8 @@ export function prepareAgentRequestPreflight(
   const allowModelOverride = resolveAllowModelOverrideFromClient(params.client);
   const canUseCronRunContinuation = resolveCanUseCronRunContinuation(params.client);
   const expectedSessionResult = admittedInternalHandoff
-    ? request.internalRuntimeHandoffId && !canUseInternalRuntimeHandoff
+    ? normalizeOptionalString(request.internalRuntimeHandoffId) !==
+      admittedInternalHandoff.sessionWorkAdmissionHandoffId
       ? ({
           ok: false,
           error: "internalRuntimeHandoffId is not authorized by this handoff purpose.",
@@ -241,8 +255,8 @@ export function prepareAgentRequestPreflight(
           ok: true,
           constraint: {
             sessionId: admittedInternalHandoff.targetSessionId,
-            ...(canUseInternalRuntimeHandoff && request.internalRuntimeHandoffId?.trim()
-              ? { handoffId: request.internalRuntimeHandoffId.trim() }
+            ...(admittedInternalHandoff.sessionWorkAdmissionHandoffId
+              ? { handoffId: admittedInternalHandoff.sessionWorkAdmissionHandoffId }
               : {}),
           },
         } as const)
@@ -259,8 +273,6 @@ export function prepareAgentRequestPreflight(
     );
     return undefined;
   }
-  const requestedPromptPersistenceSuppression = request.suppressPromptPersistence === true;
-  const requestedInternalSessionEffects = request.sessionEffects === "internal";
   const requestedModelOverride = Boolean(request.provider || request.model);
   const isOneShotModelRun = request.modelRun === true;
   const isRawModelRun = isOneShotModelRun || request.promptMode === "none";
@@ -275,10 +287,7 @@ export function prepareAgentRequestPreflight(
     );
     return undefined;
   }
-  if (
-    requestedModelOverride &&
-    (!allowModelOverride || admittedInternalHandoff?.purpose === "sessions_send")
-  ) {
+  if (requestedModelOverride && (!allowModelOverride || Boolean(admittedInternalHandoff))) {
     params.respond(
       false,
       undefined,
@@ -291,7 +300,9 @@ export function prepareAgentRequestPreflight(
   }
   if (
     (requestedInternalSessionEffects || requestedPromptPersistenceSuppression) &&
-    !canUseInternalRuntimeHandoff
+    !(admittedInternalHandoff
+      ? exactSubagentInterruptedResumeControls
+      : hasLegacyInternalRuntimeControls)
   ) {
     params.respond(
       false,
@@ -305,7 +316,10 @@ export function prepareAgentRequestPreflight(
   }
   const runId = request.idempotencyKey;
   const execApprovalFollowupApprovalId = parseExecApprovalFollowupApprovalId(runId);
-  if (execApprovalFollowupApprovalId && !canUseInternalRuntimeHandoff) {
+  if (
+    execApprovalFollowupApprovalId &&
+    (Boolean(admittedInternalHandoff) || !canUseInternalRuntimeHandoff)
+  ) {
     params.respond(
       false,
       undefined,
