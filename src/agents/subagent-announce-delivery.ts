@@ -209,7 +209,7 @@ async function runAnnounceAgentCall(params: {
       ...(params.purpose === "agent_mediated_completion" && params.cronRunContinuation === true
         ? {
             generatedMediaDelivery: {
-              task: String(request.message ?? ""),
+              task: typeof request.message === "string" ? request.message : "",
               cronRunContinuation: true,
             },
           }
