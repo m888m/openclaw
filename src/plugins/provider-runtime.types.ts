@@ -1,7 +1,6 @@
 import type { AuthProfileCredential, AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { BootstrapContextRunKind } from "../agents/bootstrap-mode.js";
 import type { EmbeddedRunTrigger } from "../agents/embedded-agent-runner/run/params.js";
-import type { TrustedSubagentCompletionHandoff } from "../agents/subagents/announce/subagent-announce-handoff.js";
 import type { ProviderSystemPromptContribution } from "../agents/system-prompt-contribution.js";
 import type { ReplyPayload } from "../auto-reply/reply-payload.js";
 import type { ThinkLevel } from "../auto-reply/thinking.shared.js";
@@ -267,7 +266,13 @@ export type ProviderRunProvenance = {
   inputProvenance?: InputProvenance;
   currentInboundEventKind?: InboundEventKind;
   spawnedBy?: string | null;
-  trustedInternalHandoff?: boolean | TrustedSubagentCompletionHandoff;
+  /**
+   * True when this call is a trusted in-process subagent-completion handoff.
+   * Intentionally a plain boolean, not the internal
+   * `TrustedSubagentCompletionHandoff` object (which carries session ids) -
+   * this is a public SDK surface and no consumer needs more than the flag.
+   */
+  trustedInternalHandoff?: boolean;
 };
 
 export type ProviderPrepareExtraParamsContext = {

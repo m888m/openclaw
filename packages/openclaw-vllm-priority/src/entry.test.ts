@@ -64,6 +64,7 @@ describe("openclaw-vllm-priority entry", () => {
         api: "openai-completions",
         baseUrl: "http://127.0.0.1:8000/v1",
         input: ["text"],
+        params: { extraBody: { priority: 0 } }, // configured opt-in
       },
       runProvenance: { trigger: "user", currentInboundEventKind: "user_request" },
       extraParams: { extraBody: { priority: 0 } },

@@ -14,9 +14,15 @@
  * raw per-request "override"), because it bypassed the plugin hook system
  * entirely. The stock `prepareExtraParams(ctx)` hook this plugin uses -
  * the same hook every other OpenClaw provider plugin uses - only exposes
- * one already-merged `ctx.extraParams`. See the package README for the one
- * fork test vector ("rejects a request-scoped neutral marker without
- * configured opt-in") this does not reproduce, and why.
+ * one already-merged `ctx.extraParams`, not the fork's separate
+ * `configuredExtraParams` (model config only) view. To preserve the fork's
+ * actual invariant - the neutral `priority: 0` marker only opts a call in
+ * when an OPERATOR configured it on that model, never when a request-scoped
+ * override merely happens to carry it - the opt-in check below reads
+ * `ctx.model?.params` (the model's own configured params, independent of
+ * any request override) instead of the merged `ctx.extraParams`. A
+ * request-scoped-only `priority: 0` therefore does NOT opt a call in, same
+ * as the fork.
  */
 import type {
   ProviderPrepareExtraParamsContext,
@@ -146,7 +152,15 @@ export function prepareVllmPriorityExtraParams(
   if (!ctx.extraParams) {
     return undefined;
   }
-  const optedIn = isVllmCompatibleModel(ctx.model) && readExtraBody(ctx.extraParams).priority === 0;
+  // Opt-in is read from the model's OWN configured params (`ctx.model.params`,
+  // sourced from `models.providers.<id>.models[].params` /
+  // `agents.defaults.models.<ref>.params`), never from the merged
+  // `ctx.extraParams` the request actually sends. This matches the fork's
+  // `configuredExtraParams`-only check: a request-scoped override that
+  // merely happens to carry `priority: 0` must NOT activate injection on a
+  // private endpoint the operator never opted in via config.
+  const optedIn =
+    isVllmCompatibleModel(ctx.model) && readExtraBody(ctx.model?.params).priority === 0;
   if (!optedIn) {
     return withoutPriority(ctx.extraParams);
   }

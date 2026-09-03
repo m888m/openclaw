@@ -1,12 +1,20 @@
 // Parity tests: vectors ported from the de-forked core implementation's own
 // suite (openclaw commit 9564aa4d5a6a56e5a51ca28ac78ac76549d1b1ad,
 // `src/agents/embedded-agent-runner/vllm-priority.test.ts`). Each `it.each`
-// table below reproduces the fork's inputs and expected outputs verbatim;
-// see the class-level comment in `vllm-priority.ts` for the one fork
-// scenario ("rejects a request-scoped neutral marker without configured
-// opt-in") that this hook shape cannot reproduce, and why - it is asserted
-// separately below as a documented behavior difference, not a pass/fail
-// parity case.
+// table below reproduces the fork's inputs and expected outputs verbatim.
+//
+// The opt-in check reads `ctx.model?.params` (the model's own CONFIGURED
+// params), matching the fork's `configuredExtraParams` argument exactly -
+// see the class-level comment in `vllm-priority.ts`. `ctx.extraParams` (the
+// merged config+request-override view the stock hook exposes) is only ever
+// used as the injection TARGET, never as the opt-in source, so a
+// request-scoped-only `priority: 0` cannot activate injection - the "rejects
+// a request-scoped neutral marker without configured opt-in" fork case
+// reproduces exactly (see below), and the dedicated
+// "non-vLLM private endpoint" test proves the same invariant from the angle
+// the review flagged: a private, listed, `openai-completions` endpoint with
+// no CONFIGURED opt-in must not fire even when a request carries
+// `priority: 0`.
 import type {
   ProviderPrepareExtraParamsContext,
   ProviderRuntimeModel,
@@ -18,13 +26,15 @@ import {
   resolveModelCallUrgency,
 } from "./vllm-priority.js";
 
+// Configured (model-config) opt-in marker - the fork's `configuredExtraParams`.
 const localModel: ProviderRuntimeModel = {
   provider: "local",
   id: "qwen",
   api: "openai-completions",
   baseUrl: "http://192.168.100.11:8000/v1",
   input: ["text"],
-} as ProviderRuntimeModel;
+  params: { extraBody: { priority: 0 } },
+} as unknown as ProviderRuntimeModel;
 
 function ctx(
   overrides: Partial<ProviderPrepareExtraParamsContext>,
@@ -81,14 +91,15 @@ describe("resolveModelCallUrgency (parity with fork vllm-priority.test.ts)", () 
 // inside core, ahead of the standard plugin hook. This plugin uses the
 // stock `prepareExtraParams(ctx)` hook - the same one every OpenClaw
 // provider plugin uses - which exposes a single, already-merged
-// `ctx.extraParams`. Each row below feeds this plugin the fork's own
-// `effectiveExtraParams` value (the cached/config-driven track, which is
-// what `ctx.extraParams` represents) and asserts an identical result.
+// `ctx.extraParams` as the injection target. Each row below feeds this
+// plugin the fork's own `effectiveExtraParams` value as `ctx.extraParams`,
+// and the fork's own `configuredExtraParams` value as `ctx.model.params`
+// (the opt-in source), and asserts an identical result.
 describe("prepareVllmPriorityExtraParams (parity with fork prepareVllmPriorityExtraParams)", () => {
   it("rewrites a camel-case neutral marker and preserves body siblings [fork case: 'rewrites a camel-case neutral marker and preserves body siblings']", () => {
     const result = prepareVllmPriorityExtraParams(
       ctx({
-        model: localModel,
+        model: localModel, // configured: extraBody.priority === 0
         runProvenance: { trigger: "user", currentInboundEventKind: "user_request" }, // -> foreground
         extraParams: {
           temperature: 0.2,
@@ -107,7 +118,7 @@ describe("prepareVllmPriorityExtraParams (parity with fork prepareVllmPriorityEx
   it("supports a snake-case neutral marker [fork case: 'supports a snake-case neutral marker and request body override']", () => {
     const result = prepareVllmPriorityExtraParams(
       ctx({
-        model: localModel,
+        model: { ...localModel, params: { extra_body: { priority: 0 } } }, // configured, snake_case
         runProvenance: { trigger: "cron" }, // -> background
         extraParams: { extra_body: { priority: 0, service_tier: "auto" } },
       }),
@@ -121,7 +132,7 @@ describe("prepareVllmPriorityExtraParams (parity with fork prepareVllmPriorityEx
     const result = prepareVllmPriorityExtraParams(
       ctx({
         provider: "spark2",
-        model: { ...localModel, provider: "spark2" },
+        model: { ...localModel, provider: "spark2" }, // configured opt-in carries over
         runProvenance: { trigger: "user", currentInboundEventKind: "user_request" }, // -> foreground
         extraParams: { extraBody: { priority: 0, service_tier: "auto" } },
       }),
@@ -134,7 +145,7 @@ describe("prepareVllmPriorityExtraParams (parity with fork prepareVllmPriorityEx
   it("does not treat a legacy nonzero priority as opt-in [fork case: same name]", () => {
     const result = prepareVllmPriorityExtraParams(
       ctx({
-        model: localModel,
+        model: { ...localModel, params: { extraBody: { priority: -100 } } }, // configured nonzero, not neutral
         runProvenance: { trigger: "user", currentInboundEventKind: "user_request" },
         extraParams: { extraBody: { priority: -100, service_tier: "auto" } },
       }),
@@ -154,7 +165,8 @@ describe("prepareVllmPriorityExtraParams (parity with fork prepareVllmPriorityEx
           api: "openai-completions",
           baseUrl: "https://api.kilo.ai/v1",
           input: ["text"],
-        } as ProviderRuntimeModel,
+          params: { extraBody: { priority: 0 } }, // inherited configured marker, but not private
+        } as unknown as ProviderRuntimeModel,
         runProvenance: { trigger: "cron" },
         extraParams: { extraBody: { priority: 0, service_tier: "auto" } },
       }),
@@ -172,7 +184,7 @@ describe("prepareVllmPriorityExtraParams (parity with fork prepareVllmPriorityEx
           provider: "openai",
           id: "gpt-5",
           api: "openai-responses",
-        } as ProviderRuntimeModel,
+        } as unknown as ProviderRuntimeModel,
         runProvenance: { trigger: "user", currentInboundEventKind: "user_request" },
         extraParams: { temperature: 0.5 },
       }),
@@ -182,28 +194,53 @@ describe("prepareVllmPriorityExtraParams (parity with fork prepareVllmPriorityEx
     expect(result).toEqual({ temperature: 0.5 });
   });
 
-  it("DOCUMENTED DEVIATION: a request-scoped-only marker opts in here, unlike the fork [fork case: 'rejects a request-scoped neutral marker without configured opt-in']", () => {
-    // In the fork, `configuredExtraParams` (model config only) and
-    // `extraParamsOverride` (request-scoped) were separate arguments, so a
-    // `priority: 0` present ONLY in the request-scoped override (never
-    // configured) was rejected: the fork's expected output stripped
-    // `priority` entirely. This plugin's `ctx.extraParams` is already the
-    // single post-merge value the standard `prepareExtraParams` hook
-    // exposes - it cannot distinguish "came from config" from "came from a
-    // request override" - so a `priority: 0` anywhere in it opts in. This
-    // is an accepted, documented consequence of using the stock hook
-    // instead of a core-only two-track mechanism; it does not weaken
-    // anything outside the already-guarded private/vLLM-compatible-endpoint
-    // boundary.
+  it("rejects a request-scoped neutral marker without configured opt-in [fork case: same name]", () => {
+    // The fork rejected a `priority: 0` present ONLY in the request-scoped
+    // override (never configured): expected output strips `priority`
+    // entirely while preserving siblings. Now that the opt-in check reads
+    // `ctx.model.params` (configured) instead of `ctx.extraParams` (merged
+    // request view), this plugin reproduces that exactly: no configured
+    // marker on the model here, only a request-scoped one in extraParams.
     const result = prepareVllmPriorityExtraParams(
       ctx({
-        model: localModel,
+        model: { ...localModel, params: undefined }, // NOT opted in via config
         runProvenance: { trigger: "user", currentInboundEventKind: "user_request" }, // -> foreground
-        extraParams: { extraBody: { priority: 0, request_field: true } },
+        extraParams: { extraBody: { priority: 0, request_field: true } }, // request-scoped only
       }),
       { providers: ["local"], priorityMap: DEFAULT_VLLM_PRIORITY_MAP },
     );
 
-    expect(result).toEqual({ extraBody: { priority: -100, request_field: true } });
+    expect(result).toEqual({ extraBody: { request_field: true } });
+  });
+
+  it("does not inject on a private, listed openai-completions endpoint that was never opted in via config, even when a request carries priority:0 (injection-safety regression test)", () => {
+    // Regression test for the review finding: a private/loopback
+    // `openai-completions` endpoint that the operator listed in
+    // `vllmPriority.providers` (so the plugin's prepareExtraParams hook
+    // does run for it), but for which the model was never configured with
+    // the `extraBody: { priority: 0 }` opt-in marker - only a request
+    // happens to carry one. This must be a strict no-op (bare strip, no
+    // injection), regardless of urgency, exactly like a hosted provider.
+    const notOptedInPrivateModel: ProviderRuntimeModel = {
+      provider: "llamacpp-local",
+      id: "some-local-model",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:8080/v1", // private/loopback -> isVllmCompatibleModel would be true
+      input: ["text"],
+      // no `params` at all: never opted in via config
+    } as unknown as ProviderRuntimeModel;
+
+    const result = prepareVllmPriorityExtraParams(
+      ctx({
+        provider: "llamacpp-local",
+        model: notOptedInPrivateModel,
+        runProvenance: { trigger: "user", currentInboundEventKind: "user_request" }, // -> foreground
+        extraParams: { extraBody: { priority: 0, some_field: true } }, // request-scoped only
+      }),
+      { providers: ["llamacpp-local"], priorityMap: DEFAULT_VLLM_PRIORITY_MAP },
+    );
+
+    expect(result).toEqual({ extraBody: { some_field: true } });
+    expect(result).not.toHaveProperty("extraBody.priority");
   });
 });
