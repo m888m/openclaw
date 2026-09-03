@@ -1,8 +1,8 @@
-import OpenClawKit
-import OpenClawProtocol
 import Cocoa
 import Foundation
 import Observation
+import OpenClawKit
+import OpenClawProtocol
 import OSLog
 
 struct InstanceInfo: Identifiable, Codable {
@@ -46,8 +46,6 @@ final class InstancesStore {
     private let interval: TimeInterval = 30
     private var eventTask: Task<Void, Never>?
     private var startCount = 0
-    private var lastPresenceById: [String: InstanceInfo] = [:]
-    private var lastLoginNotifiedAtMs: [String: Double] = [:]
 
     private struct PresenceEventPayload: Codable {
         let presence: [PresenceEntry]
@@ -62,14 +60,11 @@ final class InstancesStore {
         self.startCount += 1
         guard self.startCount == 1 else { return }
         guard self.task == nil else { return }
-        self.startGatewaySubscription()
-        self.task = Task.detached { [weak self] in
-            guard let self else { return }
-            await self.refresh()
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(self.interval * 1_000_000_000))
-                await self.refresh()
-            }
+        GatewayPushSubscription.restartTask(task: &self.eventTask) { [weak self] push in
+            self?.handle(push: push)
+        }
+        SimpleTaskSupport.startDetachedLoop(task: &self.task, interval: self.interval) { [weak self] in
+            await self?.refresh()
         }
     }
 
@@ -82,20 +77,6 @@ final class InstancesStore {
         self.task = nil
         self.eventTask?.cancel()
         self.eventTask = nil
-    }
-
-    private func startGatewaySubscription() {
-        self.eventTask?.cancel()
-        self.eventTask = Task { [weak self] in
-            guard let self else { return }
-            let stream = await GatewayConnection.shared.subscribe()
-            for await push in stream {
-                if Task.isCancelled { return }
-                await MainActor.run { [weak self] in
-                    self?.handle(push: push)
-                }
-            }
-        }
     }
 
     private func handle(push: GatewayPush) {
@@ -158,7 +139,7 @@ final class InstancesStore {
 
     private func localFallbackInstance(reason: String) -> InstanceInfo {
         let host = Host.current().localizedName ?? "this-mac"
-        let ip = Self.primaryIPv4Address()
+        let ip = SystemPresenceInfo.primaryIPv4Address()
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         let osVersion = ProcessInfo.processInfo.operatingSystemVersion
         let platform = "macos \(osVersion.majorVersion).\(osVersion.minorVersion).\(osVersion.patchVersion)"
@@ -172,56 +153,11 @@ final class InstancesStore {
             platform: platform,
             deviceFamily: "Mac",
             modelIdentifier: InstanceIdentity.modelIdentifier,
-            lastInputSeconds: Self.lastInputSeconds(),
+            lastInputSeconds: nil,
             mode: "local",
             reason: reason,
             text: text,
             ts: ts)
-    }
-
-    private static func lastInputSeconds() -> Int? {
-        let anyEvent = CGEventType(rawValue: UInt32.max) ?? .null
-        let seconds = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyEvent)
-        if seconds.isNaN || seconds.isInfinite || seconds < 0 { return nil }
-        return Int(seconds.rounded())
-    }
-
-    private static func primaryIPv4Address() -> String? {
-        var addrList: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&addrList) == 0, let first = addrList else { return nil }
-        defer { freeifaddrs(addrList) }
-
-        var fallback: String?
-        var en0: String?
-
-        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
-            let flags = Int32(ptr.pointee.ifa_flags)
-            let isUp = (flags & IFF_UP) != 0
-            let isLoopback = (flags & IFF_LOOPBACK) != 0
-            let name = String(cString: ptr.pointee.ifa_name)
-            let family = ptr.pointee.ifa_addr.pointee.sa_family
-            if !isUp || isLoopback || family != UInt8(AF_INET) { continue }
-
-            var addr = ptr.pointee.ifa_addr.pointee
-            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            let result = getnameinfo(
-                &addr,
-                socklen_t(ptr.pointee.ifa_addr.pointee.sa_len),
-                &buffer,
-                socklen_t(buffer.count),
-                nil,
-                0,
-                NI_NUMERICHOST)
-            guard result == 0 else { continue }
-            let len = buffer.prefix { $0 != 0 }
-            let bytes = len.map { UInt8(bitPattern: $0) }
-            guard let ip = String(bytes: bytes, encoding: .utf8) else { continue }
-
-            if name == "en0" { en0 = ip; break }
-            if fallback == nil { fallback = ip }
-        }
-
-        return en0 ?? fallback
     }
 
     // MARK: - Helpers
@@ -283,16 +219,6 @@ final class InstancesStore {
         }
     }
 
-    private func decodeAndApplyPresenceData(_ data: Data) {
-        do {
-            let decoded = try JSONDecoder().decode([PresenceEntry].self, from: data)
-            self.applyPresence(decoded)
-        } catch {
-            self.logger.error("presence decode from event failed: \(error.localizedDescription, privacy: .public)")
-            self.lastError = error.localizedDescription
-        }
-    }
-
     func handlePresenceEventPayload(_ payload: OpenClawProtocol.AnyCodable) {
         do {
             let wrapper = try GatewayPayloadDecoding.decode(payload, as: PresenceEventPayload.self)
@@ -324,36 +250,9 @@ final class InstancesStore {
 
     private func applyPresence(_ entries: [PresenceEntry]) {
         let withIDs = self.normalizePresence(entries)
-        self.notifyOnNodeLogin(withIDs)
-        self.lastPresenceById = Dictionary(uniqueKeysWithValues: withIDs.map { ($0.id, $0) })
         self.instances = withIDs
         self.statusMessage = nil
         self.lastError = nil
-    }
-
-    private func notifyOnNodeLogin(_ instances: [InstanceInfo]) {
-        for inst in instances {
-            guard let reason = inst.reason?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
-            guard reason == "node-connected" else { continue }
-            if let mode = inst.mode?.lowercased(), mode == "local" { continue }
-
-            let previous = self.lastPresenceById[inst.id]
-            if previous?.reason == "node-connected", previous?.ts == inst.ts { continue }
-
-            let lastNotified = self.lastLoginNotifiedAtMs[inst.id] ?? 0
-            if inst.ts <= lastNotified { continue }
-            self.lastLoginNotifiedAtMs[inst.id] = inst.ts
-
-            let name = inst.host?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let device = name?.isEmpty == false ? name! : inst.id
-            Task { @MainActor in
-                _ = await NotificationManager().send(
-                    title: "Node connected",
-                    body: device,
-                    sound: nil,
-                    priority: .active)
-            }
-        }
     }
 }
 

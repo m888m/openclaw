@@ -1,0 +1,39 @@
+{
+  "id": "openclaw-vllm-priority",
+  "name": "vLLM Priority",
+  "description": "Prioritizes shared local/private vLLM requests by run-provenance urgency (foreground/normal/background) for one vLLM engine running --scheduling-policy priority.",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": false,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "vllmPriority": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "providers": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Provider ids (models.providers.<id>) this plugin claims for prepareExtraParams. OpenClaw resolves at most one provider plugin per provider id, so a provider id must be listed here for classification/injection to run for it at all."
+          },
+          "priorities": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "foreground": { "type": "number", "default": -100 },
+              "normal": { "type": "number", "default": 0 },
+              "background": { "type": "number", "default": 100 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

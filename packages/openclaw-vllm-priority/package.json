@@ -1,0 +1,46 @@
+{
+  "name": "@openclaw/vllm-priority",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenClaw provider plugin: prioritizes shared local/private vLLM requests by run-provenance urgency.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openclaw/openclaw.git",
+    "directory": "packages/openclaw-vllm-priority"
+  },
+  "type": "module",
+  "main": "./dist/entry.js",
+  "types": "./dist/entry.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "openclaw.plugin.json",
+    "package.json"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/entry.d.ts",
+      "default": "./dist/entry.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "test": "node ../../scripts/run-vitest.mjs packages/openclaw-vllm-priority",
+    "typecheck": "echo 'type-checked as part of the workspace core sweep: pnpm tsgo:core (see tsconfig.core.json include: packages/**/*)'"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/entry.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.8.2"
+    },
+    "build": {
+      "openclawVersion": "2026.8.2"
+    }
+  }
+}

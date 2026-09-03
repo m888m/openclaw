@@ -1,5 +1,7 @@
 import SwiftUI
 
+// Keep this explicit for SwiftPM toolchains where SwiftUI macro plugins are unavailable.
+// swiftformat:disable environmentEntry
 private struct MenuItemHighlightedKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -11,6 +13,8 @@ extension EnvironmentValues {
     }
 }
 
+// swiftformat:enable environmentEntry
+
 struct SessionMenuLabelView: View {
     let row: SessionRow
     let width: CGFloat
@@ -18,14 +22,6 @@ struct SessionMenuLabelView: View {
     private let paddingLeading: CGFloat = 22
     private let paddingTrailing: CGFloat = 14
     private let barHeight: CGFloat = 6
-
-    private var primaryTextColor: Color {
-        self.isHighlighted ? Color(nsColor: .selectedMenuItemTextColor) : .primary
-    }
-
-    private var secondaryTextColor: Color {
-        self.isHighlighted ? Color(nsColor: .selectedMenuItemTextColor).opacity(0.85) : .secondary
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -38,7 +34,7 @@ struct SessionMenuLabelView: View {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(self.row.label)
                     .font(.caption.weight(self.row.key == "main" ? .semibold : .regular))
-                    .foregroundStyle(self.primaryTextColor)
+                    .foregroundStyle(MenuItemHighlightColors.primary(self.isHighlighted))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .layoutPriority(1)
@@ -47,14 +43,14 @@ struct SessionMenuLabelView: View {
 
                 Text("\(self.row.tokens.contextSummaryShort) · \(self.row.ageText)")
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(self.secondaryTextColor)
+                    .foregroundStyle(MenuItemHighlightColors.secondary(self.isHighlighted))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
                     .layoutPriority(2)
 
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(self.secondaryTextColor)
+                    .foregroundStyle(MenuItemHighlightColors.secondary(self.isHighlighted))
                     .padding(.leading, 2)
             }
         }

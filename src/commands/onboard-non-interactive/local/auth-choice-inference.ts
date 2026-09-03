@@ -1,66 +1,74 @@
+/**
+ * Infers a non-interactive auth choice from explicit CLI flags.
+ *
+ * This keeps setup deterministic when users provide API-key flags without also
+ * passing `--auth`, including plugin-defined provider auth flags.
+ */
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { resolveProviderOnboardAuthFlags } from "../../../plugins/provider-auth-choices.js";
+import { CORE_ONBOARD_AUTH_FLAGS } from "../../onboard-core-auth-flags.js";
 import type { AuthChoice, OnboardOptions } from "../../onboard-types.js";
 
 type AuthChoiceFlag = {
-  flag: keyof AuthChoiceFlagOptions;
+  optionKey: string;
   authChoice: AuthChoice;
   label: string;
 };
 
-type AuthChoiceFlagOptions = Pick<
-  OnboardOptions,
-  | "anthropicApiKey"
-  | "geminiApiKey"
-  | "openaiApiKey"
-  | "openrouterApiKey"
-  | "aiGatewayApiKey"
-  | "cloudflareAiGatewayApiKey"
-  | "moonshotApiKey"
-  | "kimiCodeApiKey"
-  | "syntheticApiKey"
-  | "veniceApiKey"
-  | "zaiApiKey"
-  | "xiaomiApiKey"
-  | "minimaxApiKey"
-  | "opencodeZenApiKey"
-  | "xaiApiKey"
->;
-
-const AUTH_CHOICE_FLAG_MAP = [
-  { flag: "anthropicApiKey", authChoice: "apiKey", label: "--anthropic-api-key" },
-  { flag: "geminiApiKey", authChoice: "gemini-api-key", label: "--gemini-api-key" },
-  { flag: "openaiApiKey", authChoice: "openai-api-key", label: "--openai-api-key" },
-  { flag: "openrouterApiKey", authChoice: "openrouter-api-key", label: "--openrouter-api-key" },
-  { flag: "aiGatewayApiKey", authChoice: "ai-gateway-api-key", label: "--ai-gateway-api-key" },
-  {
-    flag: "cloudflareAiGatewayApiKey",
-    authChoice: "cloudflare-ai-gateway-api-key",
-    label: "--cloudflare-ai-gateway-api-key",
-  },
-  { flag: "moonshotApiKey", authChoice: "moonshot-api-key", label: "--moonshot-api-key" },
-  { flag: "kimiCodeApiKey", authChoice: "kimi-code-api-key", label: "--kimi-code-api-key" },
-  { flag: "syntheticApiKey", authChoice: "synthetic-api-key", label: "--synthetic-api-key" },
-  { flag: "veniceApiKey", authChoice: "venice-api-key", label: "--venice-api-key" },
-  { flag: "zaiApiKey", authChoice: "zai-api-key", label: "--zai-api-key" },
-  { flag: "xiaomiApiKey", authChoice: "xiaomi-api-key", label: "--xiaomi-api-key" },
-  { flag: "xaiApiKey", authChoice: "xai-api-key", label: "--xai-api-key" },
-  { flag: "minimaxApiKey", authChoice: "minimax-api", label: "--minimax-api-key" },
-  { flag: "opencodeZenApiKey", authChoice: "opencode-zen", label: "--opencode-zen-api-key" },
-] satisfies ReadonlyArray<AuthChoiceFlag>;
-
+/** Inferred auth choice plus every flag that matched the provided options. */
 export type AuthChoiceInference = {
   choice?: AuthChoice;
   matches: AuthChoiceFlag[];
 };
 
-// Infer auth choice from explicit provider API key flags.
-export function inferAuthChoiceFromFlags(opts: OnboardOptions): AuthChoiceInference {
-  const matches = AUTH_CHOICE_FLAG_MAP.filter(({ flag }) => {
-    const value = opts[flag];
-    if (typeof value === "string") {
-      return value.trim().length > 0;
-    }
-    return Boolean(value);
-  });
+function hasStringValue(value: unknown): boolean {
+  return typeof value === "string" ? Boolean(normalizeOptionalString(value)) : Boolean(value);
+}
+
+/** Infers auth choice from core, plugin, and custom provider API-key flags. */
+export function inferAuthChoiceFromFlags(
+  opts: OnboardOptions,
+  params?: {
+    config?: OpenClawConfig;
+    workspaceDir?: string;
+    env?: NodeJS.ProcessEnv;
+  },
+): AuthChoiceInference {
+  const flags = [
+    ...CORE_ONBOARD_AUTH_FLAGS,
+    // Only trusted manifests can influence implicit auth choice; untrusted
+    // workspace plugins require the user to choose them explicitly.
+    ...resolveProviderOnboardAuthFlags({
+      config: params?.config,
+      workspaceDir: params?.workspaceDir,
+      env: params?.env,
+      includeUntrustedWorkspacePlugins: false,
+    }),
+  ] as ReadonlyArray<{
+    optionKey: string;
+    authChoice: string;
+    cliFlag: string;
+  }>;
+  const matches: AuthChoiceFlag[] = flags
+    .filter(({ optionKey }) => hasStringValue(opts[optionKey]))
+    .map((flag) => ({
+      optionKey: flag.optionKey,
+      authChoice: flag.authChoice as AuthChoice,
+      label: flag.cliFlag,
+    }));
+
+  if (
+    hasStringValue(opts.customBaseUrl) ||
+    hasStringValue(opts.customModelId) ||
+    hasStringValue(opts.customApiKey)
+  ) {
+    matches.push({
+      optionKey: "customBaseUrl",
+      authChoice: "custom-api-key",
+      label: "--custom-base-url/--custom-model-id/--custom-api-key",
+    });
+  }
 
   return {
     choice: matches[0]?.authChoice,

@@ -1,10 +1,29 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+/**
+ * Runtime apply_patch tool and parser.
+ * Parses OpenAI-style patch envelopes and applies add/update/delete/move hunks
+ * through guarded host or sandbox filesystem operations.
+ */
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
+import { Type } from "typebox";
+import { createAbortError } from "../infra/abort-signal.js";
+import { PATH_ALIAS_POLICIES, type PathAliasPolicy } from "../infra/path-alias-guards.js";
+import {
+  type ApplyPatchFileOptions,
+  createPatchTarget,
+  type PatchFileOps,
+  resolvePatchFileOps,
+  type SandboxApplyPatchConfig,
+} from "./apply-patch-file-ops.js";
 import { applyUpdateHunk } from "./apply-patch-update.js";
+import type { MemoryWriteProvenanceObserver } from "./memory-write-provenance.js";
+import { resolvePathFromInput } from "./path-policy.js";
+import type { AgentTool } from "./runtime/index.js";
 import { assertSandboxPath } from "./sandbox-paths.js";
+import {
+  withFileMutationQueue,
+  withFileMutationQueues,
+} from "./sessions/tools/file-mutation-queue.js";
 
 const BEGIN_PATCH_MARKER = "*** Begin Patch";
 const END_PATCH_MARKER = "*** End Patch";
@@ -15,7 +34,6 @@ const MOVE_TO_MARKER = "*** Move to: ";
 const EOF_MARKER = "*** End of File";
 const CHANGE_CONTEXT_MARKER = "@@ ";
 const EMPTY_CHANGE_CONTEXT_MARKER = "@@";
-const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 
 type AddFileHunk = {
   kind: "add";
@@ -32,6 +50,7 @@ type UpdateFileChunk = {
   changeContext?: string;
   oldLines: string[];
   newLines: string[];
+  contextOldIndexes: Array<number | undefined>;
   isEndOfFile: boolean;
 };
 
@@ -50,18 +69,25 @@ export type ApplyPatchSummary = {
   deleted: string[];
 };
 
-export type ApplyPatchResult = {
+type ApplyPatchResult = {
   summary: ApplyPatchSummary;
   text: string;
+  noOp?: boolean;
 };
 
-export type ApplyPatchToolDetails = {
+type ApplyPatchToolDetails = {
   summary: ApplyPatchSummary;
 };
 
-type ApplyPatchOptions = {
-  cwd: string;
-  sandboxRoot?: string;
+function normalizeUpdateComparison(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (normalized.length === 0 || normalized.endsWith("\n")) {
+    return normalized;
+  }
+  return `${normalized}\n`;
+}
+
+type ApplyPatchOptions = ApplyPatchFileOptions & {
   signal?: AbortSignal;
 };
 
@@ -71,19 +97,41 @@ const applyPatchSchema = Type.Object({
   }),
 });
 
+const ApplyPatchToolOutputSchema = Type.Object(
+  {
+    summary: Type.Object(
+      {
+        added: Type.Array(Type.String()),
+        modified: Type.Array(Type.String()),
+        deleted: Type.Array(Type.String()),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+/** Create the agent tool wrapper for applying patch-envelope input. */
 export function createApplyPatchTool(
-  options: { cwd?: string; sandboxRoot?: string } = {},
-  // oxlint-disable-next-line typescript/no-explicit-any
-): AgentTool<any, ApplyPatchToolDetails> {
+  options: {
+    cwd?: string;
+    root?: string;
+    sandbox?: SandboxApplyPatchConfig;
+    workspaceOnly?: boolean;
+    memoryWriteProvenance?: MemoryWriteProvenanceObserver;
+  } = {},
+): AgentTool<typeof applyPatchSchema, ApplyPatchToolDetails> {
   const cwd = options.cwd ?? process.cwd();
-  const sandboxRoot = options.sandboxRoot;
+  const root = options.root ?? cwd;
+  const sandbox = options.sandbox;
+  const workspaceOnly = options.workspaceOnly !== false;
 
   return {
     name: "apply_patch",
     label: "apply_patch",
-    description:
-      "Apply a patch to one or more files using the apply_patch format. The input should include *** Begin Patch and *** End Patch markers.",
+    description: "Patch one/many files. Input requires *** Begin Patch and *** End Patch.",
     parameters: applyPatchSchema,
+    outputSchema: ApplyPatchToolOutputSchema,
     execute: async (_toolCallId, args, signal) => {
       const params = args as { input?: string };
       const input = typeof params.input === "string" ? params.input : "";
@@ -91,29 +139,29 @@ export function createApplyPatchTool(
         throw new Error("Provide a patch input.");
       }
       if (signal?.aborted) {
-        const err = new Error("Aborted");
-        err.name = "AbortError";
-        throw err;
+        throw createAbortError("Aborted");
       }
 
       const result = await applyPatch(input, {
         cwd,
-        sandboxRoot,
+        root,
+        sandbox,
+        workspaceOnly,
+        memoryWriteProvenance: options.memoryWriteProvenance,
         signal,
       });
 
       return {
         content: [{ type: "text", text: result.text }],
         details: { summary: result.summary },
+        ...(result.noOp ? { terminate: true } : {}),
       };
     },
   };
 }
 
-export async function applyPatch(
-  input: string,
-  options: ApplyPatchOptions,
-): Promise<ApplyPatchResult> {
+/** Parse and apply a patch envelope to the configured filesystem target. */
+async function applyPatch(input: string, options: ApplyPatchOptions): Promise<ApplyPatchResult> {
   const parsed = parsePatchText(input);
   if (parsed.hunks.length === 0) {
     throw new Error("No files were modified.");
@@ -129,47 +177,96 @@ export async function applyPatch(
     modified: new Set<string>(),
     deleted: new Set<string>(),
   };
+  const noOpPaths = new Set<string>();
+  const fileOps = resolvePatchFileOps(options);
 
   for (const hunk of parsed.hunks) {
     if (options.signal?.aborted) {
-      const err = new Error("Aborted");
-      err.name = "AbortError";
-      throw err;
+      throw createAbortError("Aborted");
     }
 
     if (hunk.kind === "add") {
       const target = await resolvePatchPath(hunk.path, options);
-      await ensureDir(target.resolved);
-      await fs.writeFile(target.resolved, hunk.contents, "utf8");
+      await withFileMutationQueue(target.resolved, async () => {
+        await assertPatchParentPath(hunk.path, options);
+        await ensureDir(target.resolved, fileOps);
+        await createPatchTarget({
+          target,
+          contents: hunk.contents,
+          ops: fileOps,
+          hint: `Use "*** Update File: ${target.display}" to change it, or delete it earlier in the same patch.`,
+        });
+      });
       recordSummary(summary, seen, "added", target.display);
       continue;
     }
 
     if (hunk.kind === "delete") {
-      const target = await resolvePatchPath(hunk.path, options);
-      await fs.rm(target.resolved);
+      const target = await resolvePatchPath(hunk.path, options, PATH_ALIAS_POLICIES.unlinkTarget);
+      await withFileMutationQueue(target.resolved, () => fileOps.remove(target.resolved));
       recordSummary(summary, seen, "deleted", target.display);
       continue;
     }
 
     const target = await resolvePatchPath(hunk.path, options);
-    const applied = await applyUpdateHunk(target.resolved, hunk.chunks);
+    const moveTarget = hunk.movePath ? await resolvePatchPath(hunk.movePath, options) : undefined;
+    await withFileMutationQueues(
+      [target.resolved, ...(moveTarget ? [moveTarget.resolved] : [])],
+      async () => {
+        const applied = await applyUpdateHunk(target.resolved, hunk.chunks, {
+          readFile: (pathLocal) => fileOps.readFile(pathLocal),
+        });
 
-    if (hunk.movePath) {
-      const moveTarget = await resolvePatchPath(hunk.movePath, options);
-      await ensureDir(moveTarget.resolved);
-      await fs.writeFile(moveTarget.resolved, applied, "utf8");
-      await fs.rm(target.resolved);
-      recordSummary(summary, seen, "modified", moveTarget.display);
-    } else {
-      await fs.writeFile(target.resolved, applied, "utf8");
-      recordSummary(summary, seen, "modified", target.display);
-    }
+        if (hunk.movePath && moveTarget) {
+          await assertPatchParentPath(hunk.movePath, options);
+          await ensureDir(moveTarget.resolved, fileOps);
+          const moveResolvesToSource =
+            path.resolve(moveTarget.resolved) === path.resolve(target.resolved);
+          if (moveResolvesToSource) {
+            const existing = await fileOps.readFile(target.resolved);
+            if (normalizeUpdateComparison(existing) === normalizeUpdateComparison(applied)) {
+              noOpPaths.add(target.display);
+            } else {
+              noOpPaths.delete(target.display);
+              await fileOps.writeFile(target.resolved, applied);
+            }
+          } else {
+            noOpPaths.delete(target.display);
+            await createPatchTarget({
+              target: moveTarget,
+              contents: applied,
+              ops: fileOps,
+              hint: "Delete it earlier in the same patch to replace it.",
+            });
+            await fileOps.remove(target.resolved);
+          }
+          if (!noOpPaths.has(target.display)) {
+            recordSummary(
+              summary,
+              seen,
+              "modified",
+              moveResolvesToSource ? target.display : moveTarget.display,
+            );
+          }
+          return;
+        }
+        const existing = await fileOps.readFile(target.resolved);
+        if (normalizeUpdateComparison(existing) === normalizeUpdateComparison(applied)) {
+          noOpPaths.add(target.display);
+        } else {
+          noOpPaths.delete(target.display);
+          await fileOps.writeFile(target.resolved, applied);
+          recordSummary(summary, seen, "modified", target.display);
+        }
+      },
+    );
   }
 
+  const noOp = noOpPaths.size > 0 && Object.values(summary).every((paths) => paths.length === 0);
   return {
     summary,
-    text: formatSummary(summary),
+    text: noOp ? `No changes made to ${Array.from(noOpPaths).join(", ")}.` : formatSummary(summary),
+    ...(noOp ? { noOp: true } : {}),
   };
 }
 
@@ -204,58 +301,103 @@ function formatSummary(summary: ApplyPatchSummary): string {
   return lines.join("\n");
 }
 
-async function ensureDir(filePath: string) {
+async function ensureDir(filePath: string, ops: PatchFileOps) {
   const parent = path.dirname(filePath);
   if (!parent || parent === ".") {
     return;
   }
-  await fs.mkdir(parent, { recursive: true });
+  await ops.mkdirp(parent);
+}
+
+async function assertPatchParentPath(filePath: string, options: ApplyPatchOptions) {
+  if (options.workspaceOnly === false || options.sandbox) {
+    return;
+  }
+  const parent = path.dirname(filePath);
+  if (!parent || parent === ".") {
+    return;
+  }
+  await assertSandboxPath({
+    filePath: parent,
+    cwd: options.cwd,
+    root: options.root ?? options.cwd,
+  });
+  await assertNoExistingParentAliases({
+    parentPath: resolvePathFromInput(parent, options.cwd),
+    rootPath: options.root ?? options.cwd,
+  });
+}
+
+async function assertNoExistingParentAliases(params: { parentPath: string; rootPath: string }) {
+  const rootPath = path.resolve(params.rootPath);
+  const parentPath = path.resolve(params.parentPath);
+  const relative = path.relative(rootPath, parentPath);
+  if (!relative || relative === "" || relativePathEscapesRoot(relative)) {
+    return;
+  }
+
+  let current = rootPath;
+  for (const segment of relative.split(path.sep)) {
+    if (!segment) {
+      continue;
+    }
+    current = path.join(current, segment);
+    const stat = await fs.lstat(current).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    });
+    if (!stat) {
+      return;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Path alias under sandbox root: ${path.relative(rootPath, current)}`);
+    }
+  }
 }
 
 async function resolvePatchPath(
   filePath: string,
   options: ApplyPatchOptions,
+  aliasPolicy: PathAliasPolicy = PATH_ALIAS_POLICIES.strict,
 ): Promise<{ resolved: string; display: string }> {
-  if (options.sandboxRoot) {
-    const resolved = await assertSandboxPath({
+  if (options.sandbox) {
+    const resolved = options.sandbox.bridge.resolvePath({
       filePath,
       cwd: options.cwd,
-      root: options.sandboxRoot,
     });
+    if (options.workspaceOnly !== false && resolved.hostPath) {
+      await assertSandboxPath({
+        filePath: resolved.hostPath,
+        cwd: options.cwd,
+        root: options.root ?? options.cwd,
+        allowFinalSymlinkForUnlink: aliasPolicy.allowFinalSymlinkForUnlink,
+        allowFinalHardlinkForUnlink: aliasPolicy.allowFinalHardlinkForUnlink,
+      });
+    }
     return {
-      resolved: resolved.resolved,
-      display: resolved.relative || resolved.resolved,
+      resolved: resolved.hostPath ?? resolved.containerPath,
+      display: resolved.relativePath || resolved.containerPath,
     };
   }
 
-  const resolved = resolvePathFromCwd(filePath, options.cwd);
+  const workspaceOnly = options.workspaceOnly !== false;
+  const resolved = workspaceOnly
+    ? (
+        await assertSandboxPath({
+          filePath,
+          cwd: options.cwd,
+          root: options.root ?? options.cwd,
+          allowFinalSymlinkForUnlink: aliasPolicy.allowFinalSymlinkForUnlink,
+          allowFinalHardlinkForUnlink: aliasPolicy.allowFinalHardlinkForUnlink,
+        })
+      ).resolved
+    : resolvePathFromInput(filePath, options.cwd);
   return {
     resolved,
     display: toDisplayPath(resolved, options.cwd),
   };
-}
-
-function normalizeUnicodeSpaces(value: string): string {
-  return value.replace(UNICODE_SPACES, " ");
-}
-
-function expandPath(filePath: string): string {
-  const normalized = normalizeUnicodeSpaces(filePath);
-  if (normalized === "~") {
-    return os.homedir();
-  }
-  if (normalized.startsWith("~/")) {
-    return os.homedir() + normalized.slice(1);
-  }
-  return normalized;
-}
-
-function resolvePathFromCwd(filePath: string, cwd: string): string {
-  const expanded = expandPath(filePath);
-  if (path.isAbsolute(expanded)) {
-    return path.normalize(expanded);
-  }
-  return path.resolve(cwd, expanded);
 }
 
 function toDisplayPath(resolved: string, cwd: string): string {
@@ -263,10 +405,19 @@ function toDisplayPath(resolved: string, cwd: string): string {
   if (!relative || relative === "") {
     return path.basename(resolved);
   }
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (relativePathEscapesRoot(relative)) {
     return resolved;
   }
   return relative;
+}
+
+function relativePathEscapesRoot(relativePath: string): boolean {
+  return (
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    relativePath.startsWith("..\\") ||
+    path.isAbsolute(relativePath)
+  );
 }
 
 function parsePatchText(input: string): { hunks: Hunk[]; patch: string } {
@@ -303,9 +454,13 @@ function checkPatchBoundariesLenient(lines: string[]): string[] {
     throw new Error(strictError);
   }
   const first = lines[0];
-  const last = lines[lines.length - 1];
-  if ((first === "<<EOF" || first === "<<'EOF'" || first === '<<"EOF"') && last.endsWith("EOF")) {
-    const inner = lines.slice(1, lines.length - 1);
+  const last = lines.at(-1);
+  if (
+    last &&
+    (first === "<<EOF" || first === "<<'EOF'" || first === '<<"EOF"') &&
+    last.endsWith("EOF")
+  ) {
+    const inner = lines.slice(1, -1);
     const innerError = checkPatchBoundariesStrict(inner);
     if (!innerError) {
       return inner;
@@ -333,7 +488,10 @@ function parseOneHunk(lines: string[], lineNumber: number): { hunk: Hunk; consum
   if (lines.length === 0) {
     throw new Error(`Invalid patch hunk at line ${lineNumber}: empty hunk`);
   }
-  const firstLine = lines[0].trim();
+  const firstLine = lines.at(0)?.trim();
+  if (firstLine === undefined) {
+    throw new Error(`Invalid patch hunk at line ${lineNumber}: empty hunk`);
+  }
   if (firstLine.startsWith(ADD_FILE_MARKER)) {
     const targetPath = firstLine.slice(ADD_FILE_MARKER.length);
     let contents = "";
@@ -375,12 +533,16 @@ function parseOneHunk(lines: string[], lineNumber: number): { hunk: Hunk; consum
 
     const chunks: UpdateFileChunk[] = [];
     while (remaining.length > 0) {
-      if (remaining[0].trim() === "") {
+      const firstRemaining = remaining.at(0);
+      if (firstRemaining === undefined) {
+        break;
+      }
+      if (firstRemaining.trim() === "") {
         remaining = remaining.slice(1);
         consumed += 1;
         continue;
       }
-      if (remaining[0].startsWith("***")) {
+      if (firstRemaining.startsWith("***")) {
         break;
       }
       const { chunk, consumed: chunkLines } = parseUpdateFileChunk(
@@ -428,14 +590,15 @@ function parseUpdateFileChunk(
 
   let changeContext: string | undefined;
   let startIndex = 0;
-  if (lines[0] === EMPTY_CHANGE_CONTEXT_MARKER) {
+  const firstLine = lines.at(0);
+  if (firstLine === EMPTY_CHANGE_CONTEXT_MARKER) {
     startIndex = 1;
-  } else if (lines[0].startsWith(CHANGE_CONTEXT_MARKER)) {
-    changeContext = lines[0].slice(CHANGE_CONTEXT_MARKER.length);
+  } else if (firstLine?.startsWith(CHANGE_CONTEXT_MARKER)) {
+    changeContext = firstLine.slice(CHANGE_CONTEXT_MARKER.length);
     startIndex = 1;
   } else if (!allowMissingContext) {
     throw new Error(
-      `Invalid patch hunk at line ${lineNumber}: Expected update hunk to start with a @@ context marker, got: '${lines[0]}'`,
+      `Invalid patch hunk at line ${lineNumber}: Expected update hunk to start with a @@ context marker, got: '${firstLine}'`,
     );
   }
 
@@ -449,6 +612,7 @@ function parseUpdateFileChunk(
     changeContext,
     oldLines: [],
     newLines: [],
+    contextOldIndexes: [],
     isEndOfFile: false,
   };
 
@@ -467,6 +631,7 @@ function parseUpdateFileChunk(
 
     const marker = line[0];
     if (!marker) {
+      chunk.contextOldIndexes.push(chunk.oldLines.length);
       chunk.oldLines.push("");
       chunk.newLines.push("");
       parsedLines += 1;
@@ -475,12 +640,14 @@ function parseUpdateFileChunk(
 
     if (marker === " ") {
       const content = line.slice(1);
+      chunk.contextOldIndexes.push(chunk.oldLines.length);
       chunk.oldLines.push(content);
       chunk.newLines.push(content);
       parsedLines += 1;
       continue;
     }
     if (marker === "+") {
+      chunk.contextOldIndexes.push(undefined);
       chunk.newLines.push(line.slice(1));
       parsedLines += 1;
       continue;
@@ -500,4 +667,10 @@ function parseUpdateFileChunk(
   }
 
   return { chunk, consumed: parsedLines + startIndex };
+}
+
+if (process.env.VITEST || process.env.NODE_ENV === "test") {
+  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.applyPatchTestApi")] = {
+    applyPatch,
+  };
 }

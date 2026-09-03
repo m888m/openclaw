@@ -11,7 +11,6 @@ struct GatewayUsageProvider: Codable {
     let displayName: String
     let windows: [GatewayUsageWindow]
     let plan: String?
-    let error: String?
 }
 
 struct GatewayUsageSummary: Codable {
@@ -27,12 +26,6 @@ struct UsageRow: Identifiable {
     let windowLabel: String?
     let usedPercent: Double?
     let resetAt: Date?
-    let error: String?
-
-    var hasError: Bool {
-        if let error, !error.isEmpty { return true }
-        return false
-    }
 
     var titleText: String {
         if let plan, !plan.isEmpty { return "\(self.displayName) (\(plan))" }
@@ -41,8 +34,7 @@ struct UsageRow: Identifiable {
 
     var remainingPercent: Int? {
         guard let usedPercent, usedPercent.isFinite else { return nil }
-        let remaining = max(0, min(100, Int(round(100 - usedPercent))))
-        return remaining
+        return max(0, min(100, Int(round(100 - usedPercent))))
     }
 
     func detailText(now: Date = .init()) -> String {
@@ -86,8 +78,7 @@ extension GatewayUsageSummary {
                 plan: provider.plan,
                 windowLabel: window.label,
                 usedPercent: window.usedPercent,
-                resetAt: window.resetAt.map { Date(timeIntervalSince1970: $0 / 1000) },
-                error: nil)
+                resetAt: window.resetAt.map { Date(timeIntervalSince1970: $0 / 1000) })
         }
     }
 }

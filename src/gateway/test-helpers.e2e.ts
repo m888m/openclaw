@@ -1,10 +1,21 @@
+// Gateway E2E test helpers.
+// Starts gateway servers, connects test clients, and handles device-auth fixtures.
+import { writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { rawDataToString } from "@openclaw/gateway-client/websocket-data";
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { WebSocket } from "ws";
+import { type HelloOk, PROTOCOL_VERSION } from "../../packages/gateway-protocol/src/index.js";
+import { clearConfigCache, clearRuntimeConfigSnapshot } from "../config/config.js";
+import { clearSessionStoreCacheForTest } from "../config/sessions/store-writer-state.js";
 import {
+  type DeviceIdentity,
   loadOrCreateDeviceIdentity,
   publicKeyRawBase64UrlFromPem,
   signDevicePayload,
 } from "../infra/device-identity.js";
-import { rawDataToString } from "../infra/ws.js";
+import { captureEnv } from "../test-utils/env.js";
 import { getDeterministicFreePortBlock } from "../test-utils/ports.js";
 import {
   GATEWAY_CLIENT_MODES,
@@ -13,59 +24,171 @@ import {
   type GatewayClientName,
 } from "../utils/message-channel.js";
 import { GatewayClient } from "./client.js";
-import { buildDeviceAuthPayload } from "./device-auth.js";
-import { PROTOCOL_VERSION } from "./protocol/index.js";
+import { buildDeviceAuthPayloadV3 } from "./device-auth.js";
+import { startGatewayServer } from "./server.js";
+import { GATEWAY_STARTUP_MUTATED_ENV_KEYS } from "./test-helpers.env.js";
 
-export async function getFreeGatewayPort(): Promise<number> {
+/** Reserve a deterministic free port block for Gateway E2E tests. */
+export async function getGatewayE2ePortBlock(): Promise<number> {
   return await getDeterministicFreePortBlock({ offsets: [0, 1, 2, 3, 4] });
 }
 
+/** Connect a GatewayClient with test defaults and resolve after hello-ok. */
 export async function connectGatewayClient(params: {
   url: string;
   token?: string;
+  deviceToken?: string;
   clientName?: GatewayClientName;
   clientDisplayName?: string;
   clientVersion?: string;
   mode?: GatewayClientMode;
+  platform?: string;
+  deviceFamily?: string;
+  role?: "operator" | "node";
+  scopes?: string[];
+  caps?: string[];
+  commands?: string[];
+  permissions?: Record<string, boolean>;
+  instanceId?: string;
+  deviceIdentity?: DeviceIdentity;
+  onEvent?: (evt: { event?: string; payload?: unknown }) => void;
+  onHelloOk?: (hello: HelloOk) => void;
+  connectChallengeTimeoutMs?: number;
+  preauthHandshakeTimeoutMs?: number;
+  requestTimeoutMs?: number;
+  minProtocol?: number;
+  maxProtocol?: number;
+  timeoutMs?: number;
+  timeoutMessage?: string;
 }) {
+  const role = params.role ?? "operator";
+  const scopes = params.scopes ?? (role === "node" ? [] : undefined);
+  const platform = params.platform ?? process.platform;
+  const identityRoot = process.env.OPENCLAW_STATE_DIR ?? process.env.HOME ?? os.tmpdir();
+  const deviceIdentity =
+    params.deviceIdentity ??
+    loadOrCreateDeviceIdentity({
+      path: (() => {
+        const safe = normalizeLowercaseStringOrEmpty(
+          `${params.clientName ?? GATEWAY_CLIENT_NAMES.TEST}-${params.mode ?? GATEWAY_CLIENT_MODES.TEST}-${platform}-${params.deviceFamily ?? "none"}-${role}`.replace(
+            /[^a-zA-Z0-9._-]+/g,
+            "_",
+          ),
+        );
+        return path.join(identityRoot, "test-device-identities", `${safe}.sqlite`);
+      })(),
+    });
   return await new Promise<InstanceType<typeof GatewayClient>>((resolve, reject) => {
     let settled = false;
-    const stop = (err?: Error, client?: InstanceType<typeof GatewayClient>) => {
+    const stop = (err?: Error, connectedClient?: InstanceType<typeof GatewayClient>) => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timer);
       if (err) {
+        void client?.stopAndWait({ timeoutMs: 1_000 }).catch(() => {
+          client?.stop();
+        });
         reject(err);
       } else {
-        resolve(client as InstanceType<typeof GatewayClient>);
+        resolve(connectedClient as InstanceType<typeof GatewayClient>);
       }
     };
-    const client = new GatewayClient({
+    const client: InstanceType<typeof GatewayClient> | undefined = new GatewayClient({
       url: params.url,
       token: params.token,
+      deviceToken: params.deviceToken,
+      ...(params.connectChallengeTimeoutMs !== undefined
+        ? { connectChallengeTimeoutMs: params.connectChallengeTimeoutMs }
+        : {}),
+      preauthHandshakeTimeoutMs: params.preauthHandshakeTimeoutMs ?? params.timeoutMs,
+      ...(params.requestTimeoutMs !== undefined
+        ? { requestTimeoutMs: params.requestTimeoutMs }
+        : {}),
+      minProtocol: params.minProtocol,
+      maxProtocol: params.maxProtocol,
       clientName: params.clientName ?? GATEWAY_CLIENT_NAMES.TEST,
       clientDisplayName: params.clientDisplayName ?? "vitest",
       clientVersion: params.clientVersion ?? "dev",
+      platform,
+      deviceFamily: params.deviceFamily,
       mode: params.mode ?? GATEWAY_CLIENT_MODES.TEST,
-      onHelloOk: () => stop(undefined, client),
+      role,
+      scopes,
+      caps: params.caps,
+      commands: params.commands,
+      permissions: params.permissions,
+      instanceId: params.instanceId,
+      deviceIdentity,
+      onEvent: params.onEvent,
+      onHelloOk: (hello) => {
+        params.onHelloOk?.(hello);
+        stop(undefined, client);
+      },
       onConnectError: (err) => stop(err),
       onClose: (code, reason) =>
         stop(new Error(`gateway closed during connect (${code}): ${reason}`)),
     });
-    const timer = setTimeout(() => stop(new Error("gateway connect timeout")), 10_000);
+    const timer = setTimeout(
+      () => stop(new Error(params.timeoutMessage ?? "gateway connect timeout")),
+      params.timeoutMs ?? 10_000,
+    );
     timer.unref();
     client.start();
   });
 }
 
+/** Stop a connected GatewayClient and wait for close. */
+export async function disconnectGatewayClient(client: GatewayClient): Promise<void> {
+  await client.stopAndWait();
+}
+
 export async function connectDeviceAuthReq(params: { url: string; token?: string }) {
   const ws = new WebSocket(params.url);
-  await new Promise<void>((resolve) => ws.once("open", resolve));
+  const connectNoncePromise = new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("timeout waiting for connect challenge")),
+      5000,
+    );
+    const closeHandler = (code: number, reason: Buffer) => {
+      clearTimeout(timer);
+      ws.off("message", handler);
+      reject(new Error(`closed ${code}: ${rawDataToString(reason)}`));
+    };
+    const handler = (data: WebSocket.RawData) => {
+      try {
+        const obj = JSON.parse(rawDataToString(data)) as {
+          type?: unknown;
+          event?: unknown;
+          payload?: { nonce?: unknown } | null;
+        };
+        if (obj.type !== "event" || obj.event !== "connect.challenge") {
+          return;
+        }
+        const nonce = obj.payload?.nonce;
+        if (typeof nonce !== "string" || nonce.trim().length === 0) {
+          return;
+        }
+        clearTimeout(timer);
+        ws.off("message", handler);
+        ws.off("close", closeHandler);
+        resolve(nonce.trim());
+      } catch {
+        // ignore parse errors while waiting for challenge
+      }
+    };
+    ws.on("message", handler);
+    ws.once("close", closeHandler);
+  });
+  await new Promise<void>((resolve) => {
+    ws.once("open", resolve);
+  });
+  const connectNonce = await connectNoncePromise;
   const identity = loadOrCreateDeviceIdentity();
   const signedAtMs = Date.now();
-  const payload = buildDeviceAuthPayload({
+  const platform = process.platform;
+  const payload = buildDeviceAuthPayloadV3({
     deviceId: identity.deviceId,
     clientId: GATEWAY_CLIENT_NAMES.TEST,
     clientMode: GATEWAY_CLIENT_MODES.TEST,
@@ -73,12 +196,15 @@ export async function connectDeviceAuthReq(params: { url: string; token?: string
     scopes: [],
     signedAtMs,
     token: params.token ?? null,
+    nonce: connectNonce,
+    platform,
   });
   const device = {
     id: identity.deviceId,
     publicKey: publicKeyRawBase64UrlFromPem(identity.publicKeyPem),
     signature: signDevicePayload(identity.privateKeyPem, payload),
     signedAt: signedAtMs,
+    nonce: connectNonce,
   };
   ws.send(
     JSON.stringify({
@@ -92,7 +218,7 @@ export async function connectDeviceAuthReq(params: { url: string; token?: string
           id: GATEWAY_CLIENT_NAMES.TEST,
           displayName: "vitest",
           version: "dev",
-          platform: process.platform,
+          platform,
           mode: GATEWAY_CLIENT_MODES.TEST,
         },
         caps: [],
@@ -135,4 +261,59 @@ export async function connectDeviceAuthReq(params: { url: string; token?: string
   });
   ws.close();
   return res;
+}
+
+export async function startGatewayWithClient(params: {
+  cfg: unknown;
+  configPath: string;
+  token: string;
+  clientDisplayName?: string;
+  scopes?: string[];
+  onEvent?: (evt: { event?: string; payload?: unknown }) => void;
+}) {
+  const gatewayStartupEnv = captureEnv([...GATEWAY_STARTUP_MUTATED_ENV_KEYS]);
+  let server: Awaited<ReturnType<typeof startGatewayServer>> | undefined;
+  try {
+    await writeFile(params.configPath, `${JSON.stringify(params.cfg, null, 2)}\n`);
+    process.env.OPENCLAW_CONFIG_PATH = params.configPath;
+    clearRuntimeConfigSnapshot();
+    clearConfigCache();
+    clearSessionStoreCacheForTest();
+
+    const port = await getGatewayE2ePortBlock();
+    const startedServer = await startGatewayServer(port, {
+      bind: "loopback",
+      auth: { mode: "token", token: params.token },
+      controlUiEnabled: false,
+    });
+    server = startedServer;
+    const client = await connectGatewayClient({
+      url: `ws://127.0.0.1:${port}`,
+      token: params.token,
+      clientDisplayName: params.clientDisplayName,
+      scopes: params.scopes,
+      onEvent: params.onEvent,
+    });
+
+    return {
+      port,
+      client,
+      server: {
+        close: async (...args: Parameters<typeof startedServer.close>) => {
+          try {
+            await startedServer.close(...args);
+          } finally {
+            gatewayStartupEnv.restore();
+          }
+        },
+      },
+    };
+  } catch (error) {
+    try {
+      await server?.close({ reason: "gateway E2E client setup failed" });
+    } finally {
+      gatewayStartupEnv.restore();
+    }
+    throw error;
+  }
 }

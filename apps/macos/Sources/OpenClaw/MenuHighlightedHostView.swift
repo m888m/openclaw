@@ -22,7 +22,9 @@ final class HighlightedMenuItemHostView: NSView {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override var intrinsicContentSize: NSSize {
         let size = self.hosting.fittingSize
@@ -31,17 +33,7 @@ final class HighlightedMenuItemHostView: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let tracking {
-            self.removeTrackingArea(tracking)
-        }
-        let options: NSTrackingArea.Options = [
-            .mouseEnteredAndExited,
-            .activeAlways,
-            .inVisibleRect,
-        ]
-        let area = NSTrackingArea(rect: self.bounds, options: options, owner: self, userInfo: nil)
-        self.addTrackingArea(area)
-        self.tracking = area
+        TrackingAreaSupport.resetMouseTracking(on: self, tracking: &self.tracking, owner: self)
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -85,18 +77,5 @@ final class HighlightedMenuItemHostView: NSView {
         let size = self.hosting.fittingSize
         self.frame = NSRect(origin: .zero, size: NSSize(width: width, height: size.height))
         self.invalidateIntrinsicContentSize()
-    }
-}
-
-struct MenuHostedHighlightedItem: NSViewRepresentable {
-    let width: CGFloat
-    let rootView: AnyView
-
-    func makeNSView(context _: Context) -> HighlightedMenuItemHostView {
-        HighlightedMenuItemHostView(rootView: self.rootView, width: self.width)
-    }
-
-    func updateNSView(_ nsView: HighlightedMenuItemHostView, context _: Context) {
-        nsView.update(rootView: self.rootView, width: self.width)
     }
 }
