@@ -355,6 +355,7 @@ export function buildEmbeddedCompactionRuntimeContext(
     skillsSnapshot: params.skillsSnapshot,
     senderIsOwner: params.senderIsOwner,
     senderId: params.senderId ?? undefined,
+    runProvenance: params.runProvenance,
     provider: resolved.provider,
     runtimeProvider: resolved.runtimeProvider,
     model: resolved.model,

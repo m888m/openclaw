@@ -37,6 +37,7 @@ import {
   wrapProviderStreamFn as wrapProviderStreamFnRuntime,
 } from "../../plugins/provider-hook-runtime.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
+import type { ProviderRunProvenance } from "../../plugins/provider-runtime.types.js";
 import { resolveModelExtraParamSources } from "../model-extra-params.js";
 import {
   getModelProviderRequestRouteFacts,
@@ -105,6 +106,8 @@ const testing = {
 if (process.env.VITEST || process.env.NODE_ENV === "test") {
   (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.extraParamsTestApi")] = testing;
 }
+
+export { extractProviderRunProvenance } from "./run-provenance.js";
 
 /**
  * Resolve provider-specific extra params from model config.
@@ -242,6 +245,7 @@ function resolvePreparedExtraParamsCacheKey(params: {
   resolvedExtraParams?: Record<string, unknown>;
   model?: ProviderRuntimeModel;
   resolvedTransport?: SupportedTransport;
+  runProvenance?: ProviderRunProvenance;
 }): string {
   return JSON.stringify({
     provider: params.provider,
@@ -255,6 +259,10 @@ function resolvePreparedExtraParamsCacheKey(params: {
       stripRequestScopedExtraParams(sanitizeExtraParamsRecord(params.extraParamsOverride)) ?? null,
     resolvedExtraParams: params.resolvedExtraParams ?? null,
     model: fingerprintPreparedExtraParamsModel(params.model),
+    // A plugin's prepareExtraParams hook may branch on run-provenance (for
+    // example, per-attempt request-scheduling priority), so it must vary the
+    // cache key exactly like any other input the hook can read.
+    runProvenance: params.runProvenance ?? null,
   });
 }
 
@@ -271,6 +279,8 @@ export function resolvePreparedExtraParams(params: {
   model?: ProviderRuntimeModel;
   resolvedTransport?: SupportedTransport;
   providerRuntimeHandle?: ProviderRuntimePluginHandle;
+  /** Run-provenance signals forwarded to a provider plugin's `prepareExtraParams` hook. */
+  runProvenance?: ProviderRunProvenance;
 }): Record<string, unknown> {
   const resolvedExtraParams =
     params.resolvedExtraParams ??
@@ -336,6 +346,7 @@ export function resolvePreparedExtraParams(params: {
         model: params.model,
         extraParams: merged,
         thinkingLevel: params.thinkingLevel,
+        runProvenance: params.runProvenance,
       },
     }) ?? merged;
   const transportPatch = providerRuntimeDeps.resolveProviderExtraParamsForTransport({
@@ -1112,6 +1123,13 @@ export function applyExtraParamsToAgent(
   options?: {
     preparedExtraParams?: Record<string, unknown>;
     nativeWebSearchPolicyContext?: NativeWebSearchToolPolicyParams;
+    /**
+     * Forwarded to `resolvePreparedExtraParams` when this call resolves
+     * extra params itself (i.e. `preparedExtraParams` is not supplied).
+     * Ignored otherwise, since a supplied `preparedExtraParams` means the
+     * caller already resolved (and provenance-scoped) extra params upstream.
+     */
+    runProvenance?: ProviderRunProvenance;
   },
 ): { effectiveExtraParams: Record<string, unknown> } {
   const resolvedExtraParams = resolveExtraParams({
@@ -1142,6 +1160,7 @@ export function applyExtraParamsToAgent(
       resolvedExtraParams,
       model,
       resolvedTransport,
+      runProvenance: options?.runProvenance,
     });
   const wrapperContext: ApplyExtraParamsContext = {
     agent,

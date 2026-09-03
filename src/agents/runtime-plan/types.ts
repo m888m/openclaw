@@ -5,6 +5,7 @@
  */
 import type { TSchema } from "typebox";
 import type { MessagePresentationAction } from "../../interactive/payload.js";
+import type { ProviderRunProvenance } from "../../plugin-sdk/plugin-entry.js";
 import type {
   ModelApi,
   ProviderModelRouteRuntimePolicy,
@@ -489,6 +490,7 @@ type AgentRuntimeTransportPlan = {
     workspaceDir?: string;
     model?: AgentRuntimeModel;
     resolvedTransport?: AgentRuntimeTransport;
+    runProvenance?: ProviderRunProvenance;
   }): Record<string, unknown>;
 };
 

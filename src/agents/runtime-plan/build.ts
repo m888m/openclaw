@@ -219,6 +219,7 @@ export function buildAgentRuntimePlan(params: BuildAgentRuntimePlanParams): Agen
       model: asProviderRuntimeModel(overrides.model) ?? model,
       resolvedTransport: overrides.resolvedTransport ?? transport,
       providerRuntimeHandle: providerRuntimeHandleForPlugins,
+      runProvenance: overrides.runProvenance,
     });
   let memoizedTranscriptPolicy: ReturnType<typeof resolveTranscriptRuntimePolicy> | undefined;
   let memoizedTransportExtraParams: ReturnType<typeof resolveTransportExtraParams> | undefined;

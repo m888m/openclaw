@@ -104,6 +104,7 @@ export type {
   ProviderPrepareDynamicModelContext,
   ProviderPrepareExtraParamsContext,
   ProviderPrepareRuntimeAuthContext,
+  ProviderRunProvenance,
   ProviderPreparedRuntimeAuth,
   ProviderReasoningOutputMode,
   ProviderReasoningOutputModeContext,

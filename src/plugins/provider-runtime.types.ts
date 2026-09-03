@@ -1,10 +1,15 @@
 import type { AuthProfileCredential, AuthProfileStore } from "../agents/auth-profiles/types.js";
+import type { BootstrapContextRunKind } from "../agents/bootstrap-mode.js";
+import type { EmbeddedRunTrigger } from "../agents/embedded-agent-runner/run/params.js";
+import type { TrustedSubagentCompletionHandoff } from "../agents/subagents/announce/subagent-announce-handoff.js";
 import type { ProviderSystemPromptContribution } from "../agents/system-prompt-contribution.js";
 import type { ReplyPayload } from "../auto-reply/reply-payload.js";
 import type { ThinkLevel } from "../auto-reply/thinking.shared.js";
+import type { InboundEventKind } from "../channels/inbound-event/kind.js";
 import type { ModelProviderConfig } from "../config/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ModelRegistry } from "../llm/model-registry.js";
+import type { InputProvenance } from "../sessions/input-provenance.js";
 import type { ProviderSystemPromptContributionContext } from "./provider-authentication.types.js";
 import type { ProviderRuntimeModel } from "./provider-runtime-model.types.js";
 
@@ -244,6 +249,27 @@ export type ProviderAuthDoctorHintContext = {
 /** Provider-facing effort after OpenClaw lowers orchestration-only modes. */
 type ProviderTransportThinkingLevel = Exclude<ThinkLevel, "ultra">;
 
+/**
+ * Host-resolved run-provenance signals for the model call a provider plugin
+ * is about to prepare extra params for.
+ *
+ * This is a generic, read-only projection of "why is this call happening" -
+ * OpenClaw core does not interpret these fields itself. A provider plugin can
+ * use them to build its own request-shaping policy (routing, scheduling
+ * priority, safety tiers, etc.) without OpenClaw core needing to know about
+ * that policy. Optional and undefined whenever the host does not have (or
+ * does not resolve) run-provenance for the current call, so existing plugins
+ * are unaffected.
+ */
+export type ProviderRunProvenance = {
+  trigger?: EmbeddedRunTrigger;
+  bootstrapContextRunKind?: BootstrapContextRunKind;
+  inputProvenance?: InputProvenance;
+  currentInboundEventKind?: InboundEventKind;
+  spawnedBy?: string | null;
+  trustedInternalHandoff?: boolean | TrustedSubagentCompletionHandoff;
+};
+
 export type ProviderPrepareExtraParamsContext = {
   config?: OpenClawConfig;
   agentDir?: string;
@@ -255,6 +281,8 @@ export type ProviderPrepareExtraParamsContext = {
   model?: ProviderRuntimeModel;
   extraParams?: Record<string, unknown>;
   thinkingLevel?: ProviderTransportThinkingLevel;
+  /** Run-provenance signals for this call, when the host resolves them. See `ProviderRunProvenance`. */
+  runProvenance?: ProviderRunProvenance;
 };
 
 export type ProviderExtraParamsForTransportContext = Omit<

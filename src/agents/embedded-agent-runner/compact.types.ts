@@ -10,6 +10,7 @@ import type { SessionToolOverrides } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { GroupToolPolicyConfig } from "../../config/types.tools.js";
 import type { ContextEngine, ContextEngineRuntimeContext } from "../../context-engine/types.js";
+import type { ProviderRunProvenance } from "../../plugins/provider-runtime.types.js";
 import type { RuntimePluginToolGrant } from "../../plugins/runtime/tool-grant.js";
 import type { CommandQueueEnqueueFn } from "../../process/command-queue.types.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
@@ -63,6 +64,8 @@ export type CompactEmbeddedAgentSessionParams = {
   inputProvenance?: InputProvenance;
   /** Consumed in-process subagent-completion capability; never derived from public input. */
   trustedInternalHandoff?: TrustedSubagentCompletionHandoff;
+  /** Run-provenance signals inherited from the run that requested this auxiliary model call. */
+  runProvenance?: ProviderRunProvenance;
   toolsAllow?: string[];
   disableTools?: boolean;
   runtimePluginToolGrant?: RuntimePluginToolGrant;

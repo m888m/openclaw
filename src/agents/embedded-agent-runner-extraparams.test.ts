@@ -2246,6 +2246,101 @@ describe("applyExtraParamsToAgent", () => {
     expect(effectiveExtraParams.transport).toBe("auto");
   });
 
+  it.each([
+    ["cron", { trigger: "cron" as const }, { trigger: "cron" }],
+    [
+      "heartbeat",
+      { bootstrapContextRunKind: "heartbeat" as const },
+      { bootstrapContextRunKind: "heartbeat" },
+    ],
+    [
+      "user",
+      { trigger: "user" as const, currentInboundEventKind: "user_request" as const },
+      { trigger: "user", currentInboundEventKind: "user_request" },
+    ],
+    [
+      "inter_session",
+      { inputProvenance: { kind: "inter_session" as const } },
+      { inputProvenance: { kind: "inter_session" } },
+    ],
+  ])(
+    "forwards run-provenance to a provider plugin's prepareExtraParams hook for %s runs",
+    (_name, runProvenance, expected) => {
+      const prepareProviderExtraParams = vi.fn((params) => params.context.extraParams);
+      extraParamsTesting.setProviderRuntimeDepsForTest({
+        prepareProviderExtraParams,
+        resolveProviderExtraParamsForTransport: () => undefined,
+        wrapProviderStreamFn: (params) => params.context.streamFn,
+      });
+
+      resolvePreparedExtraParams({
+        cfg: undefined,
+        provider: "local",
+        modelId: "qwen",
+        runProvenance,
+      });
+
+      expect(prepareProviderExtraParams).toHaveBeenCalledTimes(1);
+      const hookCall = prepareProviderExtraParams.mock.calls[0]?.[0] as {
+        context: { runProvenance?: unknown };
+      };
+      expect(hookCall.context.runProvenance).toMatchObject(expected);
+    },
+  );
+
+  it("leaves runProvenance undefined on a plugin's prepareExtraParams context when the caller does not resolve it", () => {
+    const prepareProviderExtraParams = vi.fn((params) => params.context.extraParams);
+    extraParamsTesting.setProviderRuntimeDepsForTest({
+      prepareProviderExtraParams,
+      resolveProviderExtraParamsForTransport: () => undefined,
+      wrapProviderStreamFn: (params) => params.context.streamFn,
+    });
+
+    resolvePreparedExtraParams({
+      cfg: undefined,
+      provider: "local",
+      modelId: "qwen",
+    });
+
+    expect(prepareProviderExtraParams).toHaveBeenCalledTimes(1);
+    const hookCall = prepareProviderExtraParams.mock.calls[0]?.[0] as {
+      context: { runProvenance?: unknown };
+    };
+    expect(hookCall.context.runProvenance).toBeUndefined();
+  });
+
+  it("varies the prepared extra-params cache key by run-provenance", () => {
+    const prepareProviderExtraParams = vi.fn((params) => ({
+      ...params.context.extraParams,
+      urgencyEcho: params.context.runProvenance?.trigger ?? "none",
+    }));
+    extraParamsTesting.setProviderRuntimeDepsForTest({
+      prepareProviderExtraParams,
+      resolveProviderExtraParamsForTransport: () => undefined,
+      wrapProviderStreamFn: (params) => params.context.streamFn,
+    });
+    const cfg = {};
+
+    const cronResult = resolvePreparedExtraParams({
+      cfg,
+      provider: "local",
+      modelId: "qwen",
+      runProvenance: { trigger: "cron" },
+    });
+    const userResult = resolvePreparedExtraParams({
+      cfg,
+      provider: "local",
+      modelId: "qwen",
+      runProvenance: { trigger: "user" },
+    });
+
+    // A cache keyed only on provider/model/agent (ignoring run-provenance)
+    // would incorrectly serve the cron-classified result to the user call.
+    expect(cronResult.urgencyEcho).toBe("cron");
+    expect(userResult.urgencyEcho).toBe("user");
+    expect(prepareProviderExtraParams).toHaveBeenCalledTimes(2);
+  });
+
   it("composes transport extra-param hooks after provider preparation", () => {
     const resolveProviderExtraParamsForTransport = vi.fn((_params) => ({
       patch: {

@@ -21,6 +21,7 @@ import { isRunnerAbortError } from "../abort.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-ttl.js";
 import {
   applyExtraParamsToAgent,
+  extractProviderRunProvenance,
   resolveAgentTransportOverride,
   resolveExplicitSettingsTransport,
   resolvePreparedExtraParams,
@@ -483,6 +484,7 @@ export async function prepareEmbeddedAttemptTransport(input: {
     ...attempt.streamParams,
     fastMode: attempt.fastMode,
   };
+  const runProvenance = extractProviderRunProvenance(attempt);
   const preparedRuntimeExtraParams = attempt.runtimePlan?.transport.resolveExtraParams({
     extraParamsOverride: streamExtraParamsOverride,
     thinkingLevel: input.providerThinkingLevel,
@@ -490,6 +492,7 @@ export async function prepareEmbeddedAttemptTransport(input: {
     workspaceDir: input.workspaceDir,
     model: attempt.model,
     resolvedTransport,
+    runProvenance,
   });
   const effectiveExtraParams =
     preparedRuntimeExtraParams ??
@@ -504,6 +507,7 @@ export async function prepareEmbeddedAttemptTransport(input: {
       workspaceDir: input.workspaceDir,
       model: attempt.model,
       resolvedTransport,
+      runProvenance,
     });
   const providerStreamFn = registerProviderStreamForModel({
     model: attempt.model,
@@ -606,6 +610,7 @@ export async function prepareEmbeddedAttemptTransport(input: {
     {
       preparedExtraParams: effectiveExtraParams,
       nativeWebSearchPolicyContext,
+      runProvenance,
     },
   );
   if (input.codeModeControlsEnabled) {

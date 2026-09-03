@@ -3,6 +3,7 @@ import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import { resolveProviderTextTransforms } from "../../plugins/provider-runtime.js";
+import type { ProviderRunProvenance } from "../../plugins/provider-runtime.types.js";
 import { wrapStreamFnTextTransforms } from "../plugin-text-transforms.js";
 import type { AgentRuntimePlan } from "../runtime-plan/types.js";
 import { applyExtraParamsToAgent } from "./extra-params.js";
@@ -38,6 +39,8 @@ export async function prepareCompactionSessionAgent(params: {
   groupChannel?: string | null;
   groupSpace?: string | null;
   spawnedBy?: string | null;
+  /** Run-provenance signals inherited from the run that requested this auxiliary model call. */
+  runProvenance?: ProviderRunProvenance;
   senderId?: string | null;
   senderName?: string | null;
   senderUsername?: string | null;
@@ -90,6 +93,7 @@ export async function prepareCompactionSessionAgent(params: {
     agentId: params.sessionAgentId,
     workspaceDir: params.effectiveWorkspace,
     model: params.effectiveModel,
+    runProvenance: params.runProvenance,
   });
   const extraParams = applyExtraParamsToAgent(
     params.session.agent as never,
@@ -105,6 +109,7 @@ export async function prepareCompactionSessionAgent(params: {
     undefined,
     {
       ...(preparedRuntimeExtraParams ? { preparedExtraParams: preparedRuntimeExtraParams } : {}),
+      runProvenance: params.runProvenance,
       nativeWebSearchPolicyContext: {
         // Summaries have no tool loop; provider-hosted tools must not inherit
         // the originating conversation's broader web-search authority.

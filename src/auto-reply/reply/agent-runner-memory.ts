@@ -55,6 +55,7 @@ import { isAbortError } from "../../infra/abort-signal.js";
 import { clearAgentRunContext, registerAgentRunContext } from "../../infra/agent-run-registry.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { resolveMemoryFlushPlan, type MemoryFlushPlan } from "../../plugins/memory-state.js";
+import type { ProviderRunProvenance } from "../../plugins/provider-runtime.types.js";
 import { CommandLane } from "../../process/lanes.js";
 import { isIncognitoSessionKey, isUnscopedSessionKeySentinel } from "../../routing/session-key.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
@@ -979,6 +980,15 @@ export async function runPreflightCompactionIfNeeded(params: {
       modelSelectionLocked: entry.modelSelectionLocked === true,
       thinkLevel: params.followupRun.run.thinkLevel,
       bashElevated: params.followupRun.run.bashElevated,
+      runProvenance: {
+        // Preflight/memory-flush compaction always happens synchronously
+        // within a heartbeat or a direct user-triggered run; it has no
+        // independent trigger of its own.
+        trigger: params.isHeartbeat ? "heartbeat" : "user",
+        currentInboundEventKind: params.followupRun.currentInboundEventKind,
+        inputProvenance: params.followupRun.run.inputProvenance,
+        spawnedBy: params.followupRun.run.spawnedBy,
+      } satisfies ProviderRunProvenance,
       trigger: "budget",
       force: true,
       forcePreflight: true,
