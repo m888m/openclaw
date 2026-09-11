@@ -218,7 +218,7 @@ describe.skipIf(!existsSync(pluginDir))(
               enabled: true,
               config: {
                 POSTMAN_DB: path.join(directory, "proposals.sqlite"),
-                POSTMAN_RELEASE_DIR: directory,
+                POSTMAN_RELEASE_DIR: path.resolve(pluginDir, "..", "..", ".."),
                 TODOIST_API_BASE_URL: baseUrl,
               },
             },
