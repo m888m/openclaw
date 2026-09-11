@@ -8,6 +8,7 @@ import {
  * Normalizes workspace, delivery, browser, sandbox, and active-model inputs before plugin tool invocation.
  */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { todoistTurn, type VerifiedTurn } from "../gateway/todoist-turn-approval.js";
 import { normalizeDeliveryContext } from "../utils/delivery-context.shared.js";
 import { resolveAgentWorkspaceDir, resolveSessionAgentIds } from "./agent-scope.js";
 import type { ConversationRecallContext } from "./conversation-recall.types.js";
@@ -94,8 +95,27 @@ export function resolveOpenClawPluginToolInputs(params: {
     threadId: options?.agentThreadId,
   });
 
+  const boundTurn = todoistTurn();
+  const resolveTurn = (): VerifiedTurn | undefined => {
+    const live = todoistTurn();
+    return live &&
+      live === boundTurn &&
+      !options?.oneShotCliRun &&
+      live.agentId === sessionAgentId &&
+      live.runId === options?.runId &&
+      live.sessionId === options?.sessionId &&
+      live.sessionKey === sessionKey &&
+      live.senderId === options?.requesterSenderId &&
+      options?.senderIsOwner === true &&
+      live.channel === options?.agentChannel &&
+      live.account === options?.agentAccountId &&
+      live.target === deliveryContext?.to
+      ? live
+      : undefined;
+  };
   return {
     context: {
+      todoistTurn: resolveTurn,
       config: options?.config,
       runtimeConfig,
       getRuntimeConfig,

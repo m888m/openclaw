@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import type {
@@ -7,6 +8,7 @@ import type {
 import { runEmbeddedAgent } from "../../agents/embedded-agent.js";
 import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import { resolveOpenAIRuntimeProvider } from "../../agents/openai-routing.js";
+import { getChannelPlugin } from "../../channels/plugins/index.js";
 import { resolveGroupSessionKey } from "../../config/sessions.js";
 import {
   isTrustedMessageActionTurnIngress,
@@ -14,6 +16,13 @@ import {
   resolveMessageActionTurnCapabilityLifetime,
   revokeMessageActionTurnCapability,
 } from "../../gateway/message-action-turn-capability.js";
+import {
+  prepareTodoistTurn,
+  mintTodoistTurn,
+  revokeTodoistTurn,
+  withTodoistTurn,
+  bindTodoistTurnAdmission,
+} from "../../gateway/todoist-turn-approval.js";
 import { logVerbose } from "../../globals.js";
 import {
   isMarkdownCapableMessageChannel,
@@ -136,6 +145,37 @@ export async function runEmbeddedFallbackCandidate(
           ...resolveMessageActionTurnCapabilityLifetime(runBaseParams.timeoutMs),
         })
       : undefined;
+  const todoistCapability = randomUUID();
+  const hostTurn = prepareTodoistTurn({
+    turn: {
+      agentId: embeddedContext.agentId ?? "",
+      sessionId: embeddedContext.sessionId,
+      sessionKey: embeddedContext.sessionKey ?? "",
+      runId: params.runId,
+      messageId: String(turn.sessionCtx.MessageSidFull ?? turn.sessionCtx.MessageSid ?? ""),
+      senderId: senderContext.senderId ?? "",
+      channel: turn.sessionCtx.Provider ?? "",
+      account: turn.sessionCtx.AccountId ?? "",
+      target: turn.sessionCtx.To ?? "",
+      senderIsOwner: runBaseParams.senderIsOwner as true,
+    },
+    ownerAllowFrom:
+      turn.sessionCtx.Provider === "telegram" && turn.sessionCtx.AccountId === "clawdy"
+        ? (getChannelPlugin("telegram")?.config.resolveAllowFrom?.({
+            cfg: params.runtimeConfig,
+            accountId: "clawdy",
+          }) ?? [])
+        : [],
+    commandBody: turn.sessionCtx.CommandBody,
+    commandAuthorized: turn.sessionCtx.CommandAuthorized,
+    chatType: turn.sessionCtx.ChatType,
+    isHeartbeat: turn.isHeartbeat,
+    inputProvenance: runBaseParams.inputProvenance,
+    ingressProvenance: turn.sessionCtx.InputProvenance,
+    trustedInternalHandoff: runBaseParams.trustedInternalHandoff,
+    lane: params.runLane,
+    signal: params.runAbortSignal,
+  });
   let attemptCompactionCount = 0;
   let postCompactionModelAttempted = false;
   let compactionAccounting: CompactionAccountingFact | undefined;
@@ -150,6 +190,9 @@ export async function runEmbeddedFallbackCandidate(
   const toolAuthorityRoute = { provider: embeddedRunProvider, model: params.model };
   turn.replyOperation?.bindToolAuthorityRoute(toolAuthorityRoute);
   try {
+    if (hostTurn) {
+      mintTodoistTurn(todoistCapability, hostTurn);
+    }
     // Profiler milestone. Exposes pre-dispatch delay without normal-path logging.
     params.timing.logMilestoneIfSlow({
       runId: params.runId,
@@ -160,7 +203,16 @@ export async function runEmbeddedFallbackCandidate(
     let eventHandler: ReturnType<typeof createAgentRunEventHandler> | undefined;
     const result = await params.timing.measure("embedded_run", () => {
       const embeddedRunParams: RunEmbeddedAgentInternalParams = {
-        preparedRunAdmission: params.preparedRunAdmission,
+        preparedRunAdmission: hostTurn
+          ? {
+              ...params.preparedRunAdmission,
+              admit: async (...args) => {
+                const admitted = await params.preparedRunAdmission.admit(...args);
+                bindTodoistTurnAdmission(todoistCapability, admitted);
+                return admitted;
+              },
+            }
+          : params.preparedRunAdmission,
         githubPublicationAvailable: params.githubPublicationAvailable,
         ...embeddedContext,
         messageActionTurnCapability,
@@ -409,7 +461,9 @@ export async function runEmbeddedFallbackCandidate(
             })()
           : undefined,
       };
-      return runEmbeddedAgent(embeddedRunParams);
+      return withTodoistTurn(hostTurn ? todoistCapability : undefined, () =>
+        runEmbeddedAgent(embeddedRunParams),
+      );
     });
     const resultCompactionCount = Math.max(0, result.meta?.agentMeta?.compactionCount ?? 0);
     attemptCompactionCount = Math.max(attemptCompactionCount, resultCompactionCount);
@@ -420,6 +474,7 @@ export async function runEmbeddedFallbackCandidate(
       ),
     };
   } finally {
+    revokeTodoistTurn(todoistCapability);
     // Runtime event/result counts are observable, but cannot prove a durable write target.
     const accounting: CompactionAccountingFact | undefined =
       compactionAccounting ??
