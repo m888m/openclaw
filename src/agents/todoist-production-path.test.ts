@@ -12,6 +12,7 @@ import {
   bindTodoistTurnAdmission,
   revokeTodoistTurn,
   withTodoistTurn,
+  todoistTurn,
   type VerifiedTurn,
 } from "../gateway/todoist-turn-approval.js";
 import { resolvePluginTools } from "../plugins/tools.js";
@@ -185,7 +186,11 @@ describe.skipIf(!existsSync(pluginDir))(
       process.env.TODOIST_API_TOKEN = "synthetic-todoist-production-path-token";
       server = createServer((request, response) => {
         if (request.method !== "GET") mutations.push(`${request.method} ${request.url}`);
+        let replied = false;
         const reply = () => {
+          // Both the waiting-child path and its cleanup may release this response.
+          if (replied) return;
+          replied = true;
           response.writeHead(200, { "content-type": "application/json" });
           response.end(
             JSON.stringify(
@@ -324,33 +329,46 @@ describe.skipIf(!existsSync(pluginDir))(
       ["heartbeat", "agent:clawy:main", false],
       ["cron isolated", "agent:clawy:cron:synthetic", false],
       ["CLI command", "agent:clawy:main", true],
+      ["spawnSubagentDirect", "agent:clawy:subagent:synthetic", false],
     ])(
-      "%s tool-context boundary denies without owner-turn capability",
+      "%s tool-context boundary rejects a live ambient owner capability",
       async (_entry, sessionKey, cli) => {
-        // Producer paths: heartbeat-runner-execution.ts:662,
-        // cron/isolated-agent/run-executor.ts:720, command/attempt-execution.ts:1363.
-        // These assertions cover their tool-context boundary, not full runner execution.
-        const { context } = resolveOpenClawPluginToolInputs({
-          resolvedConfig: config,
-          options: {
-            config,
-            workspaceDir: directory,
-            agentSessionKey: sessionKey,
-            sessionId: "synthetic-session",
-            runId: randomUUID(),
-            oneShotCliRun: cli,
-          },
+        const id = await propose();
+        await owner(`approve ${id}`, async (turn) => {
+          // Producers: src/infra/heartbeat-runner-execution.ts:662,
+          // src/cron/isolated-agent/run-executor.ts:720,
+          // src/agents/command/attempt-execution.ts:1220 (dispatch at :1363).
+          // spawnSubagentDirect dispatches at subagents/spawn/subagent-spawn.ts:378;
+          // subagent-spawn-launch-request.ts:89 supplies the child session/route,
+          // without owner authentication. agent-tools.ts:740 maps tool options.
+          // This covers their tool-context boundary, not full runner execution.
+          expect(todoistTurn()).toBe(turn);
+          const { context } = resolveOpenClawPluginToolInputs({
+            resolvedConfig: config,
+            options: {
+              config,
+              workspaceDir: directory,
+              agentSessionKey: sessionKey,
+              sessionId: "synthetic-session",
+              runId: randomUUID(),
+              agentChannel: coordinates.channel,
+              agentAccountId: coordinates.account,
+              agentTo: coordinates.target,
+              oneShotCliRun: cli,
+            },
+          });
+          expect(context.todoistTurn()).toBeUndefined();
+          const tools = resolvePluginTools({ context, toolAllowlist: ["todoist-mathias"] });
+          const write = tools.find((tool) => tool.name === "todoist_write");
+          expect(write, "Production registry must load the real Todoist plugin").toBeDefined();
+          const result = await write!.execute(randomUUID(), {
+            verb: "write",
+            args: { proposal_id: id },
+          });
+          expect(result.details).toMatchObject({ ok: false });
+          expect(todoistTurn()).toBe(turn);
+          expect(mutations).toEqual([]);
         });
-        expect(context.todoistTurn()).toBeUndefined();
-        const tools = resolvePluginTools({ context, toolAllowlist: ["todoist-mathias"] });
-        const write = tools.find((tool) => tool.name === "todoist_write");
-        expect(write, "Production registry must load the real Todoist plugin").toBeDefined();
-        const result = await write!.execute(randomUUID(), {
-          verb: "write",
-          args: { proposal_id: "synthetic-proposal" },
-        });
-        expect(result.details).toMatchObject({ ok: false });
-        expect(mutations).toEqual([]);
       },
     );
   },
