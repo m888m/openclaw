@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   prepareTodoistTurn,
@@ -36,7 +36,10 @@ describe.skipIf(!existsSync(pluginDir))(
     let baseUrl: string;
     let mutations: string[];
     let holdRead: ((release: () => void) => void) | undefined;
-    let savedToken: string | undefined;
+    let snapshotDirectory: string;
+    let snapshotPath: string;
+    const token = `test-token-${randomUUID()}`;
+    let authorizationHeaders: (string | undefined)[];
     let config: OpenClawConfig;
     const coordinates: VerifiedTurn = {
       agentId: "clawy",
@@ -178,13 +181,25 @@ describe.skipIf(!existsSync(pluginDir))(
         overrides,
       );
     }
+    beforeAll(async () => {
+      snapshotDirectory = await mkdtemp("/tmp/todoist-production-path-secrets-");
+      snapshotPath = path.join(snapshotDirectory, "openclaw-secrets.env");
+      await writeFile(
+        snapshotPath,
+        `# Synthetic secrets v2 snapshot; no host credentials\nOPENCLAW_TODOIST_API_TOKEN="${token}"\nUNRELATED_API_TOKEN="test-token-unrelated"\n`,
+        { mode: 0o600 },
+      );
+    });
+    afterAll(async () => {
+      if (snapshotDirectory) await rm(snapshotDirectory, { recursive: true, force: true });
+    });
     beforeEach(async () => {
       directory = await mkdtemp("/tmp/todoist-production-path-");
       mutations = [];
       holdRead = undefined;
-      savedToken = process.env.TODOIST_API_TOKEN;
-      process.env.TODOIST_API_TOKEN = "synthetic-todoist-production-path-token";
+      authorizationHeaders = [];
       server = createServer((request, response) => {
+        authorizationHeaders.push(request.headers.authorization);
         if (request.method !== "GET") mutations.push(`${request.method} ${request.url}`);
         let replied = false;
         const reply = () => {
@@ -224,6 +239,7 @@ describe.skipIf(!existsSync(pluginDir))(
               config: {
                 POSTMAN_DB: path.join(directory, "proposals.sqlite"),
                 POSTMAN_RELEASE_DIR: path.resolve(pluginDir, "..", "..", ".."),
+                OPENCLAW_SECRETS_SNAPSHOT: snapshotPath,
                 TODOIST_API_BASE_URL: baseUrl,
               },
             },
@@ -232,17 +248,21 @@ describe.skipIf(!existsSync(pluginDir))(
       };
     });
     afterEach(async () => {
-      if (savedToken === undefined) delete process.env.TODOIST_API_TOKEN;
-      else process.env.TODOIST_API_TOKEN = savedToken;
       server?.closeAllConnections();
       if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
       if (directory) await rm(directory, { recursive: true, force: true });
+      expect(authorizationHeaders).toEqual(authorizationHeaders.map(() => `Bearer ${token}`));
+    });
+
+    it.skip("without OPENCLAW_SECRETS_SNAPSHOT: never exercise the host default /run/openclaw-secrets/", () => {
+      // Deliberately do not load or invoke the plugin with the snapshot key omitted.
     });
 
     it("owner Telegram candidate admission/context boundary: later approval performs one mutation and replay performs none", async () => {
       const id = await propose();
       expect((await write(id)).details).toMatchObject({ ok: true, state: "succeeded" });
       expect(mutations).toHaveLength(1);
+      expect(authorizationHeaders).toContain(`Bearer ${token}`);
       mutations.length = 0;
       expect((await write(id)).details).toMatchObject({ ok: false });
       expect(mutations).toEqual([]);
